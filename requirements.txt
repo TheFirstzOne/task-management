@@ -1,0 +1,20 @@
+# Task Manager Desktop App — Dependencies
+# Python 3.10+
+
+# UI Framework
+flet>=0.21.0
+
+# Database ORM
+SQLAlchemy>=2.0.0
+
+# Database Migration
+alembic>=1.13.0
+
+# Date utilities
+python-dateutil>=2.9.0
+
+# Excel export
+openpyxl>=3.1.0
+
+# PDF export
+reportlab>=4.0.0

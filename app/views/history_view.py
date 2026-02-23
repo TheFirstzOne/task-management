@@ -1,0 +1,508 @@
+# -*- coding: utf-8 -*-
+"""
+HistoryView — Phase 6: Work History & Search UI
+Features:
+  - Timeline of all WorkHistory entries (latest first)
+  - Search by task title or detail keyword
+  - Filter by action type  (created / status_changed / assigned / commented / etc.)
+  - Filter by actor (member)
+  - Filter by date range
+  - Color-coded action badges
+  - Pagination (50 entries per page)
+Flet 0.80.x — function-based
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import List, Optional
+
+import flet as ft
+from sqlalchemy.orm import Session
+
+from app.models.history import WorkHistory
+from app.models.task import TaskStatus
+from app.services.team_service import TeamService
+from app.utils.theme import (
+    BG_DARK, BG_CARD, BG_INPUT, BG_SIDEBAR,
+    ACCENT, ACCENT2,
+    TEXT_PRI, TEXT_SEC, BORDER,
+    COLOR_DONE, COLOR_OVERDUE, COLOR_PENDING,
+    COLOR_IN_PROGRESS, COLOR_REVIEW, COLOR_CANCELLED,
+)
+
+ALL_OPT = "ทั้งหมด"
+PAGE_SIZE = 50
+
+# ── Action badge colours ───────────────────────────────────────────────────────
+_ACTION_META: dict[str, tuple[str, str]] = {
+    # (display_label, colour)
+    "created":          ("สร้างงาน",        ACCENT),
+    "status_changed":   ("เปลี่ยนสถานะ",    COLOR_IN_PROGRESS),
+    "assigned":         ("มอบหมาย",         "#AB47BC"),
+    "commented":        ("ความคิดเห็น",     COLOR_PENDING),
+    "updated_title":    ("แก้ไขชื่อ",       ACCENT2),
+    "updated_description": ("แก้ไขรายละเอียด", ACCENT2),
+    "updated_priority": ("เปลี่ยน Priority", COLOR_REVIEW),
+    "updated_due_date": ("เปลี่ยนวันกำหนด", COLOR_OVERDUE),
+    "deleted":          ("ลบงาน",           COLOR_OVERDUE),
+}
+
+def _action_label(action: str) -> str:
+    return _ACTION_META.get(action, (action, TEXT_SEC))[0]
+
+def _action_color(action: str) -> str:
+    return _ACTION_META.get(action, (action, TEXT_SEC))[1]
+
+def _fmt_dt(dt: datetime) -> str:
+    return dt.strftime("%d/%m/%Y %H:%M") if dt else "—"
+
+def _relative_time(dt: datetime) -> str:
+    """Return human-readable relative time string."""
+    if not dt:
+        return ""
+    delta = datetime.utcnow() - dt
+    secs  = int(delta.total_seconds())
+    if secs < 60:
+        return "เมื่อกี้"
+    if secs < 3600:
+        return f"{secs // 60} นาทีที่แล้ว"
+    if secs < 86400:
+        return f"{secs // 3600} ชั่วโมงที่แล้ว"
+    if secs < 86400 * 7:
+        return f"{secs // 86400} วันที่แล้ว"
+    return _fmt_dt(dt)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MAIN ENTRY
+# ══════════════════════════════════════════════════════════════════════════════
+def build_history_view(db: Session, page: ft.Page) -> ft.Control:
+    team_svc = TeamService(db)
+
+    # ── State ──────────────────────────────────────────────────────
+    state = {
+        "search":        "",
+        "filter_action": ALL_OPT,
+        "filter_actor":  ALL_OPT,
+        "date_from":     None,
+        "date_to":       None,
+        "page_num":      0,     # 0-indexed
+    }
+
+    # ── Mutable containers ─────────────────────────────────────────
+    list_col    = ft.Column(spacing=6, expand=True, scroll=ft.ScrollMode.AUTO)
+    pager_row   = ft.Row(spacing=8,
+                         vertical_alignment=ft.CrossAxisAlignment.CENTER)
+    count_text  = ft.Text("", size=12, color=TEXT_SEC)
+
+    # ══════════════════════════════════════════════════════════════
+    #  DATA HELPERS
+    # ══════════════════════════════════════════════════════════════
+    def _all_entries() -> List[WorkHistory]:
+        return (
+            db.query(WorkHistory)
+            .order_by(WorkHistory.created_at.desc())
+            .all()
+        )
+
+    def _parse_date_field(val: str) -> Optional[date]:
+        val = val.strip()
+        if not val:
+            return None
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(val, fmt).date()
+            except ValueError:
+                continue
+        try:
+            d, m, y_be = val.split("/")
+            return date(int(y_be) - 543, int(m), int(d))
+        except Exception:
+            return None
+
+    def _filter(entries: List[WorkHistory]) -> List[WorkHistory]:
+        kw       = state["search"].lower().strip()
+        f_action = state["filter_action"]
+        f_actor  = state["filter_actor"]
+        d_from   = state["date_from"]
+        d_to     = state["date_to"]
+
+        result = entries
+
+        if kw:
+            result = [
+                e for e in result
+                if (kw in (e.detail or "").lower())
+                or (e.task and kw in e.task.title.lower())
+                or (kw in e.action.lower())
+            ]
+
+        if f_action != ALL_OPT:
+            result = [e for e in result if e.action == f_action]
+
+        if f_actor != ALL_OPT:
+            try:
+                uid = int(f_actor)
+                result = [e for e in result if e.actor_id == uid]
+            except (ValueError, TypeError):
+                pass
+
+        if d_from:
+            dt_from = datetime.combine(d_from, datetime.min.time())
+            result = [e for e in result if e.created_at >= dt_from]
+        if d_to:
+            dt_to = datetime.combine(d_to, datetime.max.time())
+            result = [e for e in result if e.created_at <= dt_to]
+
+        return result
+
+    # ══════════════════════════════════════════════════════════════
+    #  ROW BUILDER
+    # ══════════════════════════════════════════════════════════════
+    def _entry_row(e: WorkHistory) -> ft.Container:
+        action_col = _action_color(e.action)
+        action_lbl = _action_label(e.action)
+
+        # Avatar / actor
+        actor_name = e.actor.name if e.actor else "ระบบ"
+        actor_init = actor_name[0].upper() if actor_name else "S"
+
+        avatar = ft.Container(
+            width=34, height=34, border_radius=17,
+            bgcolor=ACCENT + "33",
+            content=ft.Text(actor_init, size=13,
+                            weight=ft.FontWeight.BOLD,
+                            color=ACCENT,
+                            text_align=ft.TextAlign.CENTER),
+            alignment=ft.alignment.Alignment.CENTER,
+        )
+
+        # Action badge
+        badge = ft.Container(
+            padding=ft.padding.symmetric(horizontal=8, vertical=3),
+            border_radius=10,
+            bgcolor=action_col + "22",
+            border=ft.border.all(1, action_col + "55"),
+            content=ft.Text(action_lbl, size=10, color=action_col,
+                            weight=ft.FontWeight.W_500),
+        )
+
+        # Task title chip
+        task_chip = ft.Container(
+            visible=e.task is not None,
+            padding=ft.padding.symmetric(horizontal=7, vertical=2),
+            border_radius=6,
+            bgcolor=BG_INPUT,
+            content=ft.Text(
+                e.task.title[:40] if e.task else "",
+                size=11, color=TEXT_SEC,
+                no_wrap=True,
+                overflow=ft.TextOverflow.ELLIPSIS,
+            ),
+        )
+
+        # Detail text
+        detail_txt = ft.Text(
+            e.detail or "",
+            size=12, color=TEXT_PRI,
+            no_wrap=True,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+
+        # Old→New value
+        change_row_controls = []
+        if e.old_value and e.new_value:
+            change_row_controls = [
+                ft.Text(str(e.old_value)[:30], size=10,
+                        color=TEXT_SEC,
+                        style=ft.TextStyle(
+                            decoration=ft.TextDecoration.LINE_THROUGH,
+                        )),
+                ft.Icon(ft.Icons.ARROW_FORWARD, size=12, color=TEXT_SEC),
+                ft.Text(str(e.new_value)[:30], size=10, color=ACCENT2),
+            ]
+        change_row = ft.Row(
+            controls=change_row_controls,
+            spacing=6,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            visible=len(change_row_controls) > 0,
+        )
+
+        # Time
+        time_txt = ft.Text(
+            _relative_time(e.created_at),
+            size=10, color=TEXT_SEC,
+            tooltip=_fmt_dt(e.created_at),
+        )
+
+        right_col = ft.Column(
+            controls=[
+                ft.Row(
+                    controls=[badge, task_chip],
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    wrap=True,
+                ),
+                detail_txt,
+                change_row,
+                ft.Row(
+                    controls=[
+                        ft.Text(actor_name, size=11, color=TEXT_SEC),
+                        ft.Text("·", size=11, color=TEXT_SEC),
+                        time_txt,
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ],
+            spacing=4,
+            expand=True,
+        )
+
+        return ft.Container(
+            bgcolor=BG_CARD,
+            border_radius=8,
+            border=ft.border.only(left=ft.BorderSide(3, action_col)),
+            padding=ft.padding.symmetric(horizontal=14, vertical=10),
+            content=ft.Row(
+                controls=[avatar, right_col],
+                spacing=12,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+        )
+
+    # ══════════════════════════════════════════════════════════════
+    #  REBUILD
+    # ══════════════════════════════════════════════════════════════
+    def _rebuild():
+        entries   = _all_entries()
+        filtered  = _filter(entries)
+        total     = len(filtered)
+        n_pages   = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        cur_page  = max(0, min(state["page_num"], n_pages - 1))
+        state["page_num"] = cur_page
+
+        start = cur_page * PAGE_SIZE
+        page_entries = filtered[start: start + PAGE_SIZE]
+
+        count_text.value = (
+            f"แสดง {start+1}–{min(start+len(page_entries), total)} "
+            f"จาก {total} รายการ"
+        ) if total > 0 else "ไม่พบรายการ"
+
+        list_col.controls = (
+            [_entry_row(e) for e in page_entries]
+            if page_entries
+            else [ft.Text("ไม่พบประวัติที่ตรงกัน", size=13, color=TEXT_SEC)]
+        )
+
+        # Pager
+        btn_prev = ft.IconButton(
+            icon=ft.Icons.CHEVRON_LEFT,
+            icon_color=TEXT_SEC if cur_page == 0 else ACCENT,
+            icon_size=20,
+            disabled=cur_page == 0,
+            on_click=lambda e: _go_page(cur_page - 1),
+        )
+        btn_next = ft.IconButton(
+            icon=ft.Icons.CHEVRON_RIGHT,
+            icon_color=TEXT_SEC if cur_page >= n_pages - 1 else ACCENT,
+            icon_size=20,
+            disabled=cur_page >= n_pages - 1,
+            on_click=lambda e: _go_page(cur_page + 1),
+        )
+        pager_row.controls = [
+            btn_prev,
+            ft.Text(f"{cur_page + 1} / {n_pages}", size=12, color=TEXT_SEC),
+            btn_next,
+        ]
+
+        try:
+            count_text.update()
+            list_col.update()
+            pager_row.update()
+        except Exception:
+            pass
+
+    def _go_page(n: int):
+        state["page_num"] = n
+        _rebuild()
+
+    def _on_search(e):
+        state["search"]   = e.control.value or ""
+        state["page_num"] = 0
+        _rebuild()
+
+    def _on_filter_action(val):
+        state["filter_action"] = val
+        state["page_num"]      = 0
+        _rebuild()
+
+    def _on_filter_actor(val):
+        state["filter_actor"] = val
+        state["page_num"]     = 0
+        _rebuild()
+
+    def _apply_dates():
+        state["date_from"]  = _parse_date_field(tf_from.value or "")
+        state["date_to"]    = _parse_date_field(tf_to.value or "")
+        state["page_num"]   = 0
+        _rebuild()
+
+    def _clear_filters(e):
+        state.update({
+            "search": "", "filter_action": ALL_OPT,
+            "filter_actor": ALL_OPT, "date_from": None,
+            "date_to": None, "page_num": 0,
+        })
+        tf_search.value   = ""
+        dd_action.value   = ALL_OPT
+        dd_actor.value    = ALL_OPT
+        tf_from.value     = ""
+        tf_to.value       = ""
+        for ctrl in [tf_search, dd_action, dd_actor, tf_from, tf_to]:
+            try:
+                ctrl.update()
+            except Exception:
+                pass
+        _rebuild()
+
+    # ══════════════════════════════════════════════════════════════
+    #  FILTER CONTROLS
+    # ══════════════════════════════════════════════════════════════
+    # Collect distinct actions from DB
+    def _action_options():
+        rows = db.query(WorkHistory.action).distinct().all()
+        actions = sorted(set(r[0] for r in rows))
+        return [ft.dropdown.Option(ALL_OPT)] + [
+            ft.dropdown.Option(key=a, text=_action_label(a)) for a in actions
+        ]
+
+    def _actor_options():
+        users = team_svc.user_repo.get_all(active_only=False)
+        return [ft.dropdown.Option(ALL_OPT)] + [
+            ft.dropdown.Option(key=str(u.id), text=u.name) for u in users
+        ]
+
+    tf_search = ft.TextField(
+        hint_text="ค้นหา... (ชื่องาน / รายละเอียด)",
+        width=220,
+        height=40,
+        border_color=BORDER, focused_border_color=ACCENT,
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        text_size=12,
+        prefix_icon=ft.Icons.SEARCH,
+        on_change=_on_search,
+    )
+
+    dd_action = ft.Dropdown(
+        label="ประเภท", width=160,
+        options=_action_options(), value=ALL_OPT,
+        border_color=BORDER, focused_border_color=ACCENT,
+        label_style=ft.TextStyle(color=TEXT_SEC),
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        text_size=12,
+        on_select=lambda e: _on_filter_action(e.control.value),
+    )
+
+    dd_actor = ft.Dropdown(
+        label="ผู้ดำเนินการ", width=150,
+        options=_actor_options(), value=ALL_OPT,
+        border_color=BORDER, focused_border_color=ACCENT,
+        label_style=ft.TextStyle(color=TEXT_SEC),
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        text_size=12,
+        on_select=lambda e: _on_filter_actor(e.control.value),
+    )
+
+    tf_from = ft.TextField(
+        label="ตั้งแต่ (dd/mm/yyyy)", width=160,
+        border_color=BORDER, focused_border_color=ACCENT,
+        label_style=ft.TextStyle(color=TEXT_SEC, size=10),
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        text_size=12,
+        on_submit=lambda e: _apply_dates(),
+        on_blur=lambda e: _apply_dates(),
+    )
+
+    tf_to = ft.TextField(
+        label="ถึง (dd/mm/yyyy)", width=160,
+        border_color=BORDER, focused_border_color=ACCENT,
+        label_style=ft.TextStyle(color=TEXT_SEC, size=10),
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        text_size=12,
+        on_submit=lambda e: _apply_dates(),
+        on_blur=lambda e: _apply_dates(),
+    )
+
+    # ── Initial render ────────────────────────────────────────────
+    _rebuild()
+
+    # ══════════════════════════════════════════════════════════════
+    #  TOP BAR
+    # ══════════════════════════════════════════════════════════════
+    top_bar = ft.Row(
+        controls=[
+            ft.Column(
+                controls=[
+                    ft.Text("ประวัติการทำงาน", size=24,
+                            weight=ft.FontWeight.BOLD, color=TEXT_PRI),
+                    ft.Text("บันทึกการเปลี่ยนแปลงทั้งหมดในระบบ",
+                            size=13, color=TEXT_SEC),
+                ],
+                spacing=2,
+            ),
+            ft.IconButton(
+                icon=ft.Icons.REFRESH,
+                icon_color=TEXT_SEC, icon_size=20,
+                tooltip="รีเฟรช",
+                on_click=lambda e: _rebuild(),
+            ),
+        ],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+    filter_bar = ft.Row(
+        controls=[
+            ft.Icon(ft.Icons.FILTER_LIST, color=TEXT_SEC, size=18),
+            tf_search,
+            dd_action,
+            dd_actor,
+            tf_from,
+            tf_to,
+            ft.TextButton(
+                "ล้าง",
+                style=ft.ButtonStyle(color=TEXT_SEC),
+                on_click=_clear_filters,
+            ),
+        ],
+        spacing=10,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        wrap=True,
+    )
+
+    footer = ft.Row(
+        controls=[count_text, ft.Container(expand=True), pager_row],
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+    return ft.Container(
+        expand=True,
+        bgcolor=BG_DARK,
+        padding=ft.padding.all(24),
+        content=ft.Column(
+            controls=[
+                top_bar,
+                ft.Divider(height=12, color=BORDER),
+                filter_bar,
+                ft.Divider(height=8, color=BORDER),
+                list_col,
+                ft.Divider(height=8, color=BORDER),
+                footer,
+            ],
+            spacing=0,
+            expand=True,
+        ),
+    )
