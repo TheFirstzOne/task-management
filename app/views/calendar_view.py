@@ -281,7 +281,7 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
                         is_today: bool, is_selected: bool,
                         is_other_month: bool) -> ft.Container:
         if d is None:
-            return ft.Container(expand=True, height=80)
+            return ft.Container(expand=True)
 
         has_overdue = any(
             t.due_date and t.due_date.date() < today
@@ -336,7 +336,6 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
 
         return ft.Container(
             expand=True,
-            height=80,
             bgcolor=bg,
             border_radius=6,
             border=ft.border.all(1, border_col),
