@@ -114,8 +114,69 @@
 
 ---
 
-## Phase 8 — Build & Package (.exe) 🔲 TODO
+## Phase 8 — UI Fix, Build & Deploy ✅ (23 ก.พ. 2569 / แก้ไขเพิ่มเติม 26 ก.พ. 2569)
 
-- Build ด้วย `flet pack main.py --name "Task Manager"`
-- ทดสอบ .exe บน Windows
-- แจกจ่ายให้ทีม
+### Session: 23 กุมภาพันธ์ 2569
+
+#### UI Fix #1 — Calendar: Day cell แยกออกจากกันเมื่อขยายหน้าต่าง
+- **ปัญหา:** Week row แต่ละแถวมี `expand=True` ใน `ft.Column` ทำให้ Flutter แบ่งพื้นที่แนวตั้งให้เท่าๆ กัน เมื่อหน้าต่างสูงขึ้น แถวยืดออก cell ที่มี `height=80` คงที่จึงแยกห่างจากกัน
+- **ไฟล์:** `calendar_view.py`
+- **แก้ไข:**
+  - ลบ `height=80` ออกจาก day cell ทั้งหมด (ทั้ง empty cell และ normal cell)
+  - คง `expand=True` ไว้บน week row เพื่อให้แบ่งพื้นที่แนวตั้งเท่าๆ กัน
+  - cell จะยืดความสูงตาม row อัตโนมัติ ปฏิทินจึง fill พื้นที่ทั้งหมดและ responsive ตามขนาดหน้าต่าง
+
+#### Build — สร้าง Standalone Executable (.exe)
+- ใช้ `flet pack` (PyInstaller wrapper สำหรับ Flet) แทน PyInstaller ตรงๆ เพื่อให้รวม Flet runtime ได้ถูกต้อง
+- คำสั่งที่ใช้:
+  ```
+  flet pack main.py --name TaskFlow --icon assets/icon.ico
+    --add-data "assets;assets"
+    --hidden-import sqlalchemy
+    --hidden-import sqlalchemy.dialects.sqlite
+    --hidden-import openpyxl
+    --hidden-import reportlab
+  ```
+- **ผลลัพธ์:** `dist/TaskFlow.exe` ขนาด ~90 MB
+- รันได้บนเครื่องที่ไม่ได้ติดตั้ง Python
+
+#### Deploy — อัปโหลดโปรเจคขึ้น GitHub
+- ตั้งค่า Git identity (`user.name`, `user.email`)
+- สร้าง `.gitignore` ครอบคลุม Python, venv, build, dist, .exe, .db, .claude
+- `git init` → `git add` → Initial commit (29 files)
+- สร้าง public repository: `https://github.com/TheFirstzOne/task-management`
+- `git remote add origin` + `git push -u origin main`
+
+#### Documentation — เพิ่มคู่มือ GitHub
+- สร้างไฟล์ `GITHUB_GUIDE.md` อธิบายขั้นตอนการ push โปรเจคขึ้น GitHub ตั้งแต่ต้นจนจบ ครอบคลุม 10 หัวข้อ
+
+---
+
+### Session: 26 กุมภาพันธ์ 2569
+
+#### Bug Fix #6 — ข้อมูลหายทุกครั้งที่ปิดโปรแกรม (SQLite path ชี้ไป temp folder)
+- **ปัญหา:** `database.py` ใช้ `os.path.abspath(__file__)` เพื่อหา `BASE_DIR` — เมื่อรันแบบ `.exe` (PyInstaller frozen) `__file__` จะชี้ไปที่ temp folder `_MEIxxxxx` ที่ PyInstaller แตกไฟล์ชั่วคราว ทุกครั้งที่รัน `.exe` จะได้ temp folder ใหม่ที่มีเลขต่างกัน ทำให้ SQLite database ถูกสร้างใหม่เปล่าๆ เสมอ และข้อมูลเก่าสูญหาย
+- **ไฟล์:** `app/database.py`
+- **แก้ไข:** เพิ่มการตรวจสอบ `sys.frozen` เพื่อแยก path logic ระหว่าง 2 โหมด
+  ```python
+  if getattr(sys, 'frozen', False):
+      BASE_DIR = os.path.dirname(sys.executable)  # ตำแหน่งของ .exe จริงๆ
+  else:
+      BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # dev mode
+  ```
+- **ผลลัพธ์:** `data/task_manager.db` ถูกสร้างข้างๆ `.exe` และคงอยู่ข้ามการรัน
+
+#### Bug Fix #7 — `No module named 'sqlalchemy'` เมื่อรัน .exe บนเครื่องอื่น
+- **ปัญหา:** `flet pack` ครั้งก่อนใช้ System Python ซึ่งไม่มี SQLAlchemy ติดตั้งอยู่ (library ทั้งหมดอยู่ใน venv) PyInstaller จึง bundle โค้ดจาก System Python ที่ไม่มี dependency — `.exe` รันได้บนเครื่อง dev แต่ล้มเหลวบนเครื่องอื่น
+- **ไฟล์:** build command
+- **แก้ไข:** เปลี่ยนไปใช้ `venv\Scripts\flet.exe` แทน `flet` เพื่อให้ PyInstaller ใช้ venv Python ที่มี dependencies ครบ
+  ```
+  venv\Scripts\flet.exe pack main.py --name TaskFlow --icon assets/icon.ico
+    --add-data "assets;assets"
+    --hidden-import sqlalchemy
+    --hidden-import sqlalchemy.dialects.sqlite
+    --hidden-import openpyxl
+    --hidden-import reportlab
+  ```
+- **ผลลัพธ์:** `dist/TaskFlow.exe` ขนาด ~90 MB bundle SQLAlchemy และ dependencies ครบถ้วน
+- **หมายเหตุ:** สำหรับการ build ครั้งต่อไปให้ใช้ `venv\Scripts\flet.exe pack ...` เสมอ

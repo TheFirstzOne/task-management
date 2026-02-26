@@ -3,11 +3,17 @@ Database connection, session factory, and schema initialisation.
 """
 
 import os
+import sys
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# เมื่อรันเป็น .exe (frozen) ให้ใช้ตำแหน่งของ .exe เป็น base
+# เมื่อรันเป็น Python script ให้ใช้ตำแหน่งของ project root
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH  = os.path.join(DATA_DIR, "task_manager.db")
 
