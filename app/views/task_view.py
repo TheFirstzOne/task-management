@@ -42,9 +42,8 @@ def _status_chip(status: str) -> ft.Container:
     return ft.Container(
         padding=ft.padding.symmetric(horizontal=8, vertical=3),
         border_radius=20,
-        bgcolor=color + "22",
-        border=ft.border.all(1, color + "66"),
-        content=ft.Text(status, size=11, color=color, weight=ft.FontWeight.W_500),
+        bgcolor=color,
+        content=ft.Text(status, size=11, color="#FFFFFF", weight=ft.FontWeight.W_500),
     )
 
 def _priority_chip(priority: str) -> ft.Container:
@@ -52,8 +51,8 @@ def _priority_chip(priority: str) -> ft.Container:
     return ft.Container(
         padding=ft.padding.symmetric(horizontal=8, vertical=3),
         border_radius=20,
-        bgcolor=color + "22",
-        content=ft.Text(priority, size=11, color=color),
+        bgcolor=color,
+        content=ft.Text(priority, size=11, color="#FFFFFF", weight=ft.FontWeight.W_500),
     )
 
 def _due_label(due: Optional[datetime]) -> ft.Text:
@@ -129,13 +128,60 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         label="Start Date (dd/mm/yyyy)",
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
-        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8, expand=True,
     )
     tf_due_date = ft.TextField(
         label="Due Date (dd/mm/yyyy)",
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
-        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8, expand=True,
+    )
+
+    # ── Date Pickers ─────────────────────────────────────────────────
+    import time as _time
+    _utc_offset_sec = -_time.timezone                  # e.g. +25200 for UTC+7
+
+    def _fix_picker_date(picker_value):
+        """DatePicker returns local-midnight as UTC — shift back to local."""
+        return picker_value + timedelta(seconds=_utc_offset_sec)
+
+    def _on_start_date_picked(e):
+        if start_date_picker.value:
+            local = _fix_picker_date(start_date_picker.value)
+            tf_start_date.value = local.strftime("%d/%m/%Y")
+            try:
+                tf_start_date.update()
+            except Exception:
+                pass
+
+    def _on_due_date_picked(e):
+        if due_date_picker.value:
+            local = _fix_picker_date(due_date_picker.value)
+            tf_due_date.value = local.strftime("%d/%m/%Y")
+            try:
+                tf_due_date.update()
+            except Exception:
+                pass
+
+    def _open_date_picker(picker):
+        """Open DatePicker using page.show_dialog (recommended for Flet 0.82)."""
+        try:
+            page.show_dialog(picker)
+        except RuntimeError:
+            pass  # already open
+
+    start_date_picker = ft.DatePicker(on_change=_on_start_date_picked)
+    due_date_picker   = ft.DatePicker(on_change=_on_due_date_picked)
+
+    btn_start_date = ft.IconButton(
+        icon=ft.Icons.CALENDAR_TODAY, icon_color=TEXT_SEC, icon_size=20,
+        tooltip="เลือกวันที่เริ่ม",
+        on_click=lambda e: _open_date_picker(start_date_picker),
+    )
+    btn_due_date = ft.IconButton(
+        icon=ft.Icons.CALENDAR_TODAY, icon_color=TEXT_SEC, icon_size=20,
+        tooltip="เลือกวันที่ครบกำหนด",
+        on_click=lambda e: _open_date_picker(due_date_picker),
     )
 
     # Team dropdown (populated when dialog opens)
@@ -152,6 +198,16 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     dd_assignee = ft.Dropdown(
         label="มอบหมายให้",
         options=[ft.dropdown.Option(key="none", text="— ไม่ระบุ —")],
+        value="none",
+        border_color=BORDER, focused_border_color=ACCENT,
+        label_style=ft.TextStyle(color=TEXT_SEC),
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+    )
+
+    # Dependency dropdown (populated when dialog opens)
+    dd_depends_on = ft.Dropdown(
+        label="งานที่ต้องทำก่อน",
+        options=[ft.dropdown.Option(key="none", text="— ไม่มี —")],
         value="none",
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
@@ -192,6 +248,16 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             ft.dropdown.Option(key=str(u.id), text=u.name) for u in users
         ]
 
+    def _populate_depends_on_dropdown(exclude_task_id: Optional[int] = None):
+        tasks = task_svc.get_all_tasks()
+        tasks = [t for t in tasks
+                 if t.id != exclude_task_id
+                 and t.status != TaskStatus.CANCELLED]
+        dd_depends_on.options = [ft.dropdown.Option(key="none", text="— ไม่มี —")] + [
+            ft.dropdown.Option(key=str(t.id), text=f"{t.title[:40]} ({t.status.value})")
+            for t in tasks
+        ]
+
     def _close_task_dialog(e=None):
         task_dlg.open = False
         tf_title.value = tf_desc.value = tf_tags.value = ""
@@ -199,6 +265,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         dd_priority.value = "Medium"
         dd_team_dlg.value = "none"
         dd_assignee.value = "none"
+        dd_depends_on.value = "none"
         task_dlg_err.value = ""
         _editing_task_id["value"] = None
         try:
@@ -240,6 +307,13 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             except (ValueError, TypeError):
                 pass
 
+        depends_on_id = None
+        if dd_depends_on.value and dd_depends_on.value != "none":
+            try:
+                depends_on_id = int(dd_depends_on.value)
+            except (ValueError, TypeError):
+                pass
+
         try:
             if _editing_task_id["value"]:
                 task_svc.update_task(
@@ -252,6 +326,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                     due_date=due,
                     team_id=team_id,
                     assignee_id=assignee_id,
+                    depends_on_id=depends_on_id,
                 )
             else:
                 task_svc.create_task(
@@ -263,6 +338,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                     due_date=due,
                     team_id=team_id,
                     assignee_id=assignee_id,
+                    depends_on_id=depends_on_id,
                 )
             _close_task_dialog()
             _refresh_tasks()
@@ -287,7 +363,11 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                     ft.Row([dd_priority, dd_team_dlg], spacing=10),
                     dd_assignee,
                     tf_tags,
-                    ft.Row([tf_start_date, tf_due_date], spacing=10),
+                    dd_depends_on,
+                    ft.Row([
+                        tf_start_date, btn_start_date,
+                        tf_due_date, btn_due_date,
+                    ], spacing=4),
                     task_dlg_err,
                 ],
                 spacing=12, tight=True,
@@ -297,7 +377,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         actions=[
             ft.TextButton("ยกเลิก", on_click=_close_task_dialog,
                           style=ft.ButtonStyle(color=TEXT_SEC)),
-            ft.Button("บันทึก", bgcolor=ACCENT, color=TEXT_PRI,
+            ft.Button("บันทึก", bgcolor=ACCENT, color="#FFFFFF",
                               on_click=_save_task),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
@@ -334,6 +414,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     )
 
     page.overlay.extend([task_dlg, confirm_dlg])
+    # DatePickers are opened via page.show_dialog() — no overlay needed
 
     # ══════════════════════════════════════════════════════════════
     #  OPEN DIALOG HELPERS
@@ -361,6 +442,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         dd_team_dlg.value = "none"
         _populate_assignee_dropdown("none")
         dd_assignee.value = "none"
+        _populate_depends_on_dropdown(exclude_task_id=None)
+        dd_depends_on.value = "none"
         task_dlg.open = True
         try:
             page.update()
@@ -381,6 +464,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         dd_team_dlg.value    = str(task.team_id) if task.team_id else "none"
         _populate_assignee_dropdown(dd_team_dlg.value)
         dd_assignee.value    = str(task.assignee_id) if task.assignee_id else "none"
+        _populate_depends_on_dropdown(exclude_task_id=task.id)
+        dd_depends_on.value  = str(task.depends_on_id) if task.depends_on_id else "none"
         task_dlg.open        = True
         try:
             page.update()
@@ -401,6 +486,101 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             page.update()
         except Exception:
             pass
+
+    # ══════════════════════════════════════════════════════════════
+    #  DEPENDENCY HELPERS (for detail panel)
+    # ══════════════════════════════════════════════════════════════
+    def _build_dependency_section(task) -> list:
+        """Return list of controls showing dependency info (or empty list)."""
+        controls = []
+        # ── Show prerequisite task ──────────────────────────────
+        if task.depends_on_id:
+            dep = task_svc.task_repo.get_by_id(task.depends_on_id)
+            if dep:
+                controls.append(ft.Divider(height=1, color=BORDER))
+                controls.append(
+                    ft.Container(
+                        bgcolor=BG_INPUT,
+                        border_radius=8,
+                        padding=10,
+                        content=ft.Column(
+                            controls=[
+                                ft.Text("ต้องทำก่อน", size=12, color=TEXT_SEC,
+                                        weight=ft.FontWeight.W_500),
+                                ft.Row(
+                                    controls=[
+                                        ft.Icon(ft.Icons.LINK, color=ACCENT, size=14),
+                                        ft.Text(dep.title, size=13, color=TEXT_PRI,
+                                                expand=True, no_wrap=True,
+                                                overflow=ft.TextOverflow.ELLIPSIS),
+                                        _status_chip(dep.status.value),
+                                    ],
+                                    spacing=6,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                            ],
+                            spacing=4,
+                        ),
+                    )
+                )
+                # Warning if dependency not done
+                if dep.status != TaskStatus.DONE:
+                    controls.append(
+                        ft.Container(
+                            bgcolor=COLOR_NEAR + "22",
+                            border_radius=6,
+                            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                            content=ft.Row(
+                                controls=[
+                                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED,
+                                            color=COLOR_NEAR, size=16),
+                                    ft.Text(
+                                        f"งานที่ต้องทำก่อนยังไม่เสร็จ",
+                                        size=12, color=COLOR_NEAR,
+                                    ),
+                                ],
+                                spacing=6,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                        )
+                    )
+        # ── Show dependent tasks (reverse lookup) ───────────────
+        dependents = task_svc.get_dependent_tasks(task.id)
+        if dependents:
+            if not controls:
+                controls.append(ft.Divider(height=1, color=BORDER))
+            controls.append(
+                ft.Container(
+                    bgcolor=BG_INPUT,
+                    border_radius=8,
+                    padding=10,
+                    content=ft.Column(
+                        controls=[
+                            ft.Text(f"งานที่รอ task นี้: {len(dependents)} งาน",
+                                    size=12, color=TEXT_SEC,
+                                    weight=ft.FontWeight.W_500),
+                            *[
+                                ft.Row(
+                                    controls=[
+                                        ft.Icon(ft.Icons.SUBDIRECTORY_ARROW_RIGHT,
+                                                color=TEXT_SEC, size=14),
+                                        ft.Text(dt.title[:35], size=12,
+                                                color=TEXT_PRI, expand=True,
+                                                no_wrap=True,
+                                                overflow=ft.TextOverflow.ELLIPSIS),
+                                        _status_chip(dt.status.value),
+                                    ],
+                                    spacing=6,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                )
+                                for dt in dependents[:5]   # show max 5
+                            ],
+                        ],
+                        spacing=4,
+                    ),
+                )
+            )
+        return controls
 
     # ══════════════════════════════════════════════════════════════
     #  DETAIL PANEL
@@ -489,7 +669,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         def _comment_bubble(c) -> ft.Container:
             author_name = c.author.name if c.author else "ระบบ"
             return ft.Container(
-                bgcolor="#1A1D26",
+                bgcolor=BG_INPUT,
                 border_radius=8,
                 padding=10,
                 content=ft.Column(
@@ -603,6 +783,9 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
 
+                    # ── Dependency info ─────────────────────────────
+                    *_build_dependency_section(task),
+
                     # Status change
                     ft.Text("เปลี่ยนสถานะ", size=12, color=TEXT_SEC),
                     status_row,
@@ -639,7 +822,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                     new_comment_tf,
                     ft.Button(
                         "ส่ง comment",
-                        bgcolor=ACCENT, color=TEXT_PRI,
+                        bgcolor=ACCENT, color="#FFFFFF",
                         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
                         on_click=_add_comment,
                     ),
@@ -749,6 +932,32 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     #  ACTIONS
     # ══════════════════════════════════════════════════════════════
     def _change_status(task, new_status_str: str):
+        # Soft warning if dependency not done (for In Progress / Review / Done)
+        if new_status_str in (TaskStatus.IN_PROGRESS.value,
+                               TaskStatus.REVIEW.value,
+                               TaskStatus.DONE.value):
+            warning = task_svc.check_dependency_warning(task.id)
+            if warning:
+                snack = ft.SnackBar(
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED,
+                                    color="#FFFFFF", size=18),
+                            ft.Text(
+                                f"⚠ {warning}",
+                                color="#FFFFFF", size=13,
+                            ),
+                        ],
+                        spacing=8,
+                    ),
+                    bgcolor=COLOR_NEAR,
+                    duration=4000,
+                )
+                try:
+                    page.show_dialog(snack)
+                except Exception:
+                    pass
+
         task_svc.change_status(task.id, TaskStatus(new_status_str))
         _refresh_tasks()
         # Reopen detail with fresh data
@@ -958,7 +1167,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                     ft.Button(
                         "+ สร้างงาน",
                         icon=ft.Icons.ADD,
-                        bgcolor=ACCENT, color=TEXT_PRI,
+                        bgcolor=ACCENT, color="#FFFFFF",
                         style=ft.ButtonStyle(
                             shape=ft.RoundedRectangleBorder(radius=8)),
                         on_click=_open_create,

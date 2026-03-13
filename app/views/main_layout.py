@@ -1,21 +1,12 @@
 """
 MainLayout — Shell UI ของแอป
-Sidebar navigation + Content area
+Sidebar navigation + Content area + Settings (dummy)
 Compatible with Flet 0.80.x (function-based, no UserControl)
 """
 
 import flet as ft
 from app.database import SessionLocal
-
-# ── Colour palette ────────────────────────────────────────────────────────────
-BG_DARK    = "#0F1117"
-BG_SIDEBAR = "#16181F"
-BG_CARD    = "#1E2028"
-ACCENT     = "#6C63FF"
-ACCENT2    = "#00D4FF"
-TEXT_PRI   = "#F0F2F5"
-TEXT_SEC   = "#8B8FA8"
-BORDER     = "#2A2D3A"
+import app.utils.theme as theme
 
 
 NAV_ITEMS = [
@@ -66,8 +57,8 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         if old_c:
             old_c.bgcolor = "transparent"
             row: ft.Row = old_c.content
-            row.controls[0].color = TEXT_SEC
-            row.controls[1].color = TEXT_SEC
+            row.controls[0].color = theme.TEXT_SEC
+            row.controls[1].color = theme.TEXT_SEC
             row.controls[1].weight = ft.FontWeight.NORMAL
             old_c.update()
 
@@ -76,10 +67,10 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         # Activate new
         new_c = nav_containers.get(key)
         if new_c:
-            new_c.bgcolor = ACCENT + "22"
+            new_c.bgcolor = theme.ACCENT + "22"
             row: ft.Row = new_c.content
-            row.controls[0].color = ACCENT
-            row.controls[1].color = TEXT_PRI
+            row.controls[0].color = theme.ACCENT
+            row.controls[1].color = theme.TEXT_PRI
             row.controls[1].weight = ft.FontWeight.W_500
             new_c.update()
 
@@ -93,14 +84,14 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         c = ft.Container(
             height=42,
             border_radius=8,
-            bgcolor=ACCENT + "22" if is_active else "transparent",
+            bgcolor=theme.ACCENT + "22" if is_active else "transparent",
             padding=ft.padding.symmetric(horizontal=10),
             content=ft.Row(
                 controls=[
-                    ft.Icon(icon, color=ACCENT if is_active else TEXT_SEC, size=20),
+                    ft.Icon(icon, color=theme.ACCENT if is_active else theme.TEXT_SEC, size=20),
                     ft.Text(
                         label,
-                        color=TEXT_PRI if is_active else TEXT_SEC,
+                        color=theme.TEXT_PRI if is_active else theme.TEXT_SEC,
                         size=14,
                         weight=ft.FontWeight.W_500 if is_active else ft.FontWeight.NORMAL,
                     ),
@@ -113,11 +104,32 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         nav_containers[key] = c
         return c
 
+    # ── Settings button (dummy — placeholder for future features) ─
+    def _open_settings(e=None):
+        pass   # TODO: implement settings in the future
+
+    settings_btn = ft.Container(
+        height=42,
+        border_radius=8,
+        bgcolor="transparent",
+        padding=ft.padding.symmetric(horizontal=10),
+        content=ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.SETTINGS_OUTLINED, color=theme.TEXT_SEC, size=20),
+                ft.Text("ตั้งค่า", color=theme.TEXT_SEC, size=14),
+            ],
+            spacing=10,
+        ),
+        on_click=_open_settings,
+        ink=True,
+    )
+
     # ── Sidebar ───────────────────────────────────────────────────
     logo = ft.Row(
         controls=[
-            ft.Icon(ft.Icons.BOLT, color=ACCENT, size=26),
-            ft.Text("TaskFlow", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRI),
+            ft.Icon(ft.Icons.BOLT, color=theme.ACCENT, size=26),
+            ft.Text("TaskFlow", size=18, weight=ft.FontWeight.BOLD,
+                     color=theme.TEXT_PRI),
         ],
         spacing=8,
     )
@@ -129,11 +141,18 @@ def build_main_layout(page: ft.Page) -> ft.Control:
 
     sidebar = ft.Container(
         width=220,
-        bgcolor=BG_SIDEBAR,
+        bgcolor=theme.BG_SIDEBAR,
         padding=ft.padding.only(left=12, right=12, top=24, bottom=16),
-        border=ft.border.only(right=ft.BorderSide(1, BORDER)),
+        border=ft.border.only(right=ft.BorderSide(1, theme.BORDER)),
         content=ft.Column(
-            controls=[logo, ft.Divider(height=24, color=BORDER), nav_col],
+            controls=[
+                logo,
+                ft.Divider(height=24, color=theme.BORDER),
+                nav_col,
+                ft.Container(expand=True),          # spacer — push settings to bottom
+                ft.Divider(height=1, color=theme.BORDER),
+                settings_btn,
+            ],
             spacing=0,
             expand=True,
         ),
@@ -159,14 +178,15 @@ def build_dashboard_view(db) -> ft.Control:
         return ft.Container(
             width=160,
             height=90,
-            bgcolor=BG_CARD,
+            bgcolor=theme.BG_CARD,
             border_radius=12,
-            border=ft.border.all(1, BORDER),
+            border=ft.border.all(1, theme.BORDER),
             padding=16,
             content=ft.Column(
                 controls=[
-                    ft.Text(str(value), size=32, weight=ft.FontWeight.BOLD, color=color),
-                    ft.Text(label, size=13, color=TEXT_SEC),
+                    ft.Text(str(value), size=32, weight=ft.FontWeight.BOLD,
+                            color=color),
+                    ft.Text(label, size=13, color=theme.TEXT_SEC),
                 ],
                 spacing=2,
             ),
@@ -174,11 +194,11 @@ def build_dashboard_view(db) -> ft.Control:
 
     cards = ft.Row(
         controls=[
-            stat_card("งานทั้งหมด",  stats["total"],       TEXT_PRI),
-            stat_card("กำลังทำ",     stats["in_progress"], ACCENT2),
-            stat_card("เสร็จแล้ว",  stats["done"],        "#4CAF50"),
-            stat_card("เกินกำหนด",  stats["overdue"],     "#FF5252"),
-            stat_card("ค้างอยู่",   stats["pending"],     "#FFC107"),
+            stat_card("งานทั้งหมด",  stats["total"],       theme.TEXT_PRI),
+            stat_card("กำลังทำ",     stats["in_progress"], theme.ACCENT2),
+            stat_card("เสร็จแล้ว",  stats["done"],        "#22C55E"),
+            stat_card("เกินกำหนด",  stats["overdue"],     "#EF4444"),
+            stat_card("ค้างอยู่",   stats["pending"],     "#F59E0B"),
         ],
         spacing=12,
         wrap=True,
@@ -186,14 +206,14 @@ def build_dashboard_view(db) -> ft.Control:
 
     return ft.Container(
         expand=True,
-        bgcolor=BG_DARK,
+        bgcolor=theme.BG_DARK,
         padding=24,
         content=ft.Column(
             controls=[
                 ft.Text("Dashboard", size=24,
-                        weight=ft.FontWeight.BOLD, color=TEXT_PRI),
-                ft.Text("ภาพรวมงานทั้งหมด", size=13, color=TEXT_SEC),
-                ft.Divider(height=20, color=BORDER),
+                        weight=ft.FontWeight.BOLD, color=theme.TEXT_PRI),
+                ft.Text("ภาพรวมงานทั้งหมด", size=13, color=theme.TEXT_SEC),
+                ft.Divider(height=20, color=theme.BORDER),
                 cards,
             ],
             spacing=8,

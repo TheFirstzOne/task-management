@@ -1,40 +1,57 @@
 """
 Centralised colour palette & typography constants.
 Import this wherever UI colours are needed.
+Blue-White theme — clean, professional look.
 """
 
-# ── Backgrounds ───────────────────────────────────────────────────
-BG_DARK    = "#0F1117"
-BG_SIDEBAR = "#16181F"
-BG_CARD    = "#1E2028"
-BG_INPUT   = "#252834"
+# ══════════════════════════════════════════════════════════════════════════════
+#  BACKGROUNDS
+# ══════════════════════════════════════════════════════════════════════════════
+BG_DARK    = "#F0F4F8"   # Page background (light grey-blue)
+BG_SIDEBAR = "#FFFFFF"   # Sidebar background (white)
+BG_CARD    = "#FFFFFF"   # Card background (white)
+BG_INPUT   = "#E8EDF2"   # Input field background
 
-# ── Accent colours ────────────────────────────────────────────────
-ACCENT     = "#6C63FF"   # Purple — primary action
-ACCENT2    = "#00D4FF"   # Cyan  — secondary highlight
+# ══════════════════════════════════════════════════════════════════════════════
+#  ACCENT COLOURS
+# ══════════════════════════════════════════════════════════════════════════════
+ACCENT     = "#2563EB"   # Blue — primary action
+ACCENT2    = "#0EA5E9"   # Sky blue — secondary highlight
 
-# ── Status colours ────────────────────────────────────────────────
-COLOR_PENDING     = "#FFC107"   # Amber
-COLOR_IN_PROGRESS = "#00D4FF"   # Cyan
-COLOR_REVIEW      = "#AB47BC"   # Purple
-COLOR_DONE        = "#4CAF50"   # Green
-COLOR_CANCELLED   = "#757575"   # Grey
-COLOR_OVERDUE     = "#FF5252"   # Red
+# ══════════════════════════════════════════════════════════════════════════════
+#  TEXT
+# ══════════════════════════════════════════════════════════════════════════════
+TEXT_PRI = "#1E293B"   # Primary text (dark slate)
+TEXT_SEC = "#64748B"   # Secondary text (slate)
+TEXT_DIM = "#94A3B8"   # Dimmed text (light slate)
 
-# ── Priority colours ──────────────────────────────────────────────
-COLOR_LOW    = "#4CAF50"
-COLOR_MEDIUM = "#FFC107"
-COLOR_HIGH   = "#FF9800"
-COLOR_URGENT = "#FF5252"
+# ══════════════════════════════════════════════════════════════════════════════
+#  BORDER
+# ══════════════════════════════════════════════════════════════════════════════
+BORDER = "#CBD5E1"     # Border (slate-200)
 
-# ── Text ──────────────────────────────────────────────────────────
-TEXT_PRI = "#F0F2F5"
-TEXT_SEC = "#8B8FA8"
-TEXT_DIM = "#4A4D5E"
+# ══════════════════════════════════════════════════════════════════════════════
+#  STATUS COLOURS
+# ══════════════════════════════════════════════════════════════════════════════
+COLOR_PENDING     = "#F59E0B"   # Amber
+COLOR_IN_PROGRESS = "#0EA5E9"   # Sky blue
+COLOR_REVIEW      = "#8B5CF6"   # Violet
+COLOR_DONE        = "#22C55E"   # Green
+COLOR_CANCELLED   = "#9CA3AF"   # Grey
+COLOR_OVERDUE     = "#EF4444"   # Red
 
-# ── Border ────────────────────────────────────────────────────────
-BORDER = "#2A2D3A"
+# ══════════════════════════════════════════════════════════════════════════════
+#  PRIORITY COLOURS
+# ══════════════════════════════════════════════════════════════════════════════
+COLOR_LOW    = "#22C55E"
+COLOR_MEDIUM = "#F59E0B"
+COLOR_HIGH   = "#F97316"
+COLOR_URGENT = "#EF4444"
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
 
 def status_color(status: str) -> str:
     return {

@@ -208,7 +208,7 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
             sc = status_color(t.status.value)
             pc = priority_color(t.priority.value)
             return ft.Container(
-                bgcolor="#1A1D26",
+                bgcolor=BG_INPUT,
                 border_radius=8,
                 border=ft.border.only(left=ft.BorderSide(3, pc)),
                 padding=ft.padding.symmetric(horizontal=10, vertical=8),

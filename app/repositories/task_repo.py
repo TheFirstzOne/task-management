@@ -78,6 +78,28 @@ class TaskRepository:
             .all()
         )
 
+    # ── Dependency queries ──────────────────────────────────────────
+    def get_dependent_tasks(self, task_id: int) -> List[Task]:
+        """Return tasks whose depends_on_id == task_id (reverse lookup)."""
+        return (
+            self.db.query(Task)
+            .filter(Task.depends_on_id == task_id)
+            .order_by(Task.created_at.desc())
+            .all()
+        )
+
+    def get_dependency_chain(self, task_id: int) -> List[int]:
+        """Walk the depends_on chain upward and return all ancestor IDs."""
+        chain: List[int] = []
+        current_id = task_id
+        for _ in range(100):                        # safety limit
+            task = self.get_by_id(current_id)
+            if not task or not task.depends_on_id:
+                break
+            chain.append(task.depends_on_id)
+            current_id = task.depends_on_id
+        return chain
+
     # ── Task Update ───────────────────────────────────────────────
     def update(self, task_id: int, **kwargs) -> Optional[Task]:
         task = self.get_by_id(task_id)

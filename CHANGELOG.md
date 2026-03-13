@@ -180,3 +180,107 @@
   ```
 - **ผลลัพธ์:** `dist/TaskFlow.exe` ขนาด ~90 MB bundle SQLAlchemy และ dependencies ครบถ้วน
 - **หมายเหตุ:** สำหรับการ build ครั้งต่อไปให้ใช้ `venv\Scripts\flet.exe pack ...` เสมอ
+
+---
+
+## Phase 9 — Environment Recovery & UI Color Fix ✅ (5 มี.ค. 2569)
+
+### Session: 5 มีนาคม 2569
+
+#### Environment Fix — venv เสียเพราะ Python 3.11 ถูกถอนออก
+- **ปัญหา:** `venv/` ถูกสร้างด้วย Python 3.11 ที่ถูกถอนออกจากระบบ ทำให้ `venv\Scripts\python.exe` และ `venv\Scripts\flet.exe` เปิดไม่ได้เลย โปรแกรมรันไม่ขึ้น
+  ```
+  Error: No Python at
+  'C:\Users\Firstz\AppData\Local\Programs\Python\Python311\python.exe'
+  ```
+- **ไฟล์:** `venv/` (ทั้งโฟลเดอร์)
+- **แก้ไข:** สร้าง venv ใหม่ด้วย System Python 3.10.11 ที่ยังมีอยู่
+  ```bash
+  rm -rf "D:/Task Management/venv"
+  python -m venv "D:/Task Management/venv"
+  "D:/Task Management/venv/Scripts/python.exe" -m pip install -r requirements.txt
+  ```
+- **ผลลัพธ์:** venv ใหม่พร้อมใช้งาน, ติดตั้ง dependencies ครบ (flet 0.82.0, SQLAlchemy 2.0.48, alembic 1.18.4, openpyxl 3.1.5, reportlab 4.4.10)
+
+---
+
+#### UI Fix #2 — Team member list: สีแสดงผลผิด เนื่องจาก Hex Alpha Format Bug
+
+- **ปัญหา:** โค้ดใช้ `ACCENT + "44"` และ `ACCENT + "33"` เพื่อต้องการสี ACCENT แบบโปร่งใส แต่ Flet/Flutter ตีความ hex 8 หลักในรูปแบบ `#AARRGGBB` (alpha นำหน้า) ไม่ใช่ `#RRGGBBAA`
+  - `"#6C63FF44"` → Flutter อ่านเป็น `alpha=0x6C, R=0x63, G=0xFF, B=0x44` = **สีเขียวสด** ❌
+  - ควรได้ = purple โปร่งใส แต่กลับได้สีเขียวที่ไม่ตัดกับพื้นหลัง dark
+- **ไฟล์:** `app/views/team_view.py`
+- **แก้ไข 4 จุด:**
+
+  | ส่วน | เดิม (ผิด) | ใหม่ |
+  |---|---|---|
+  | Avatar circle bgcolor | `ACCENT + "44"` → สีเขียว bug | `ACCENT` (solid `#6C63FF`) |
+  | Avatar circle text color | `ACCENT` (purple จาง) | `"#FFFFFF"` (ขาว — contrast สูง) |
+  | Role badge bgcolor | `ACCENT + "33"` → สีเขียว bug | `"#2A2870"` (dark purple solid) |
+  | Role badge text color | `ACCENT` (จาง) | `"#B8B5FF"` (light purple — อ่านง่าย) |
+  | Active toggle icon | `COLOR_DONE` (green `#4CAF50`) | `ACCENT2` (cyan `#00D4FF`) |
+  | Workload bar (low ≤2) | `COLOR_DONE` (green `#4CAF50`) | `"#00D4FF"` (cyan — ตัดกับ dark bg ชัด) |
+
+- **เพิ่ม import:** `ACCENT2` เข้า import list ของ `team_view.py`
+
+---
+
+## Phase 10 — Blue-White Theme + Task Dependencies ✅ (8 มี.ค. 2569)
+
+### Session: 8 มีนาคม 2569
+
+#### Feature — Task Dependencies (งานที่ต้องทำก่อน)
+- **Model:** เพิ่ม `depends_on_id` (FK → tasks.id) ใน `Task` model
+- **Repository:** เพิ่ม `get_dependent_tasks()`, `get_dependency_chain()` ใน `task_repo.py`
+- **Service:** เพิ่ม `_validate_dependency()` ป้องกัน circular dependency, `check_dependency_warning()`, `get_dependent_tasks()` ใน `task_service.py`
+- **UI (task_view.py):**
+  - เพิ่ม Dropdown "ต้องทำก่อน" ในฟอร์มสร้าง/แก้ไขงาน
+  - Detail panel แสดงงานที่ต้องทำก่อน + Warning ถ้ายังไม่เสร็จ
+  - แสดงรายการงานที่รอ task นี้ (reverse lookup)
+  - SnackBar เตือนเมื่อเปลี่ยนสถานะแต่ dependency ยังไม่เสร็จ
+
+#### Theme — เปลี่ยนจาก Dark Mode เป็น Blue-White ถาวร
+- **`theme.py`** — เขียนใหม่ทั้งหมด:
+  - ลบ `DARK_PALETTE`, `LIGHT_PALETTE`, `apply_theme()`, `is_dark()`
+  - กำหนดสี Blue-White ถาวร:
+
+  | ตัวแปร | ค่า | คำอธิบาย |
+  |---|---|---|
+  | `BG_DARK` | `#F0F4F8` | พื้นหลังหลัก (grey-blue อ่อน) |
+  | `BG_SIDEBAR` | `#FFFFFF` | Sidebar (ขาว) |
+  | `BG_CARD` | `#FFFFFF` | Card (ขาว) |
+  | `BG_INPUT` | `#E8EDF2` | Input field |
+  | `ACCENT` | `#2563EB` | สีหลัก (น้ำเงิน) |
+  | `ACCENT2` | `#0EA5E9` | สีรอง (ฟ้า) |
+  | `TEXT_PRI` | `#1E293B` | ตัวหนังสือหลัก (เข้ม) |
+  | `TEXT_SEC` | `#64748B` | ตัวหนังสือรอง |
+  | `BORDER` | `#CBD5E1` | เส้นขอบ |
+
+- **`main.py`** — เปลี่ยน `page.theme_mode = ft.ThemeMode.LIGHT` ถาวร
+- **`main_layout.py`** — ลบโค้ด theme toggle (AlertDialog, Switch, importlib.reload) ออกทั้งหมด, เก็บปุ่ม "ตั้งค่า" ไว้เป็น dummy สำหรับอนาคต
+
+#### UI Fix — แก้ hardcoded dark colors ให้เข้ากับ Blue-White theme
+- **`task_view.py`** (3 จุด) — `bgcolor="#1A1D26"` → `bgcolor=BG_INPUT`
+  - Dependency section (ต้องทำก่อน, งานที่รอ)
+  - Comment bubble
+- **`calendar_view.py`** (1 จุด) — `bgcolor="#1A1D26"` → `bgcolor=BG_INPUT` (task card)
+- **`team_view.py`** (2 จุด):
+  - `bgcolor="#1A1D26"` → `bgcolor=BG_INPUT` (member row)
+  - `bgcolor="#2A2870"` → `bgcolor=ACCENT+"22"` + `color=ACCENT` (role chip)
+- **ปุ่มบน ACCENT background** — เปลี่ยน `color=TEXT_PRI` → `color="#FFFFFF"` (5 จุดใน task_view + team_view)
+
+#### Build Fix
+- อัปเดต `setuptools` 65.5.0 → 82.0.0 แก้ `PyiFrozenImporter` error
+- ใช้ `./venv/Scripts/python.exe -m PyInstaller` แทน system Python เพื่อให้ bundle dependencies ครบ
+- **ผลลัพธ์:** `TaskFlow.exe` ขนาด 62 MB
+
+---
+
+### สิ่งที่ต้องทำเพิ่มเติม (Planned)
+
+| รายการ | รายละเอียด |
+|---|---|
+| Export PDF ธีมฟ้า-ขาว | `summary_view.py` ยังใช้สี dark ใน PDF export — ปรับให้ตรงกับ UI |
+| Export Excel ธีมฟ้า-ขาว | ปรับสี header/cell ใน Excel export ให้ตรงกับ Blue-White theme |
+| เลือกไฟล์ Database จากไดร์ฟกลาง | วางไฟล์ SQLite ไว้บน shared drive ของทีม + `PRAGMA journal_mode=WAL` + `busy_timeout` + retry logic สำหรับทีมเล็ก (2-5 คน) |
+| ระบบล็อกอิน | Admin สร้างบัญชี username/password ให้สมาชิก, แบ่ง Role (Admin/Member), บันทึกผู้ใช้ใน history log อัตโนมัติ |

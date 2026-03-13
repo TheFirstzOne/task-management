@@ -34,6 +34,37 @@ class TaskService:
         self.db.add(entry)
         self.db.commit()
 
+    # ── Dependency validation ──────────────────────────────────────
+    def _validate_dependency(self, task_id: Optional[int],
+                             depends_on_id: Optional[int]) -> None:
+        """Raise ValueError if dependency is invalid (self-ref or circular)."""
+        if depends_on_id is None:
+            return
+        target = self.task_repo.get_by_id(depends_on_id)
+        if not target:
+            raise ValueError("ไม่พบงานที่อ้างอิง")
+        if task_id is not None and task_id == depends_on_id:
+            raise ValueError("ไม่สามารถอ้างอิงตัวเอง")
+        if task_id is not None:
+            chain = self.task_repo.get_dependency_chain(depends_on_id)
+            if task_id in chain:
+                raise ValueError("เกิดการอ้างอิงแบบวงกลม (circular dependency)")
+
+    def check_dependency_warning(self, task_id: int) -> Optional[str]:
+        """Return warning string if dependency is not Done, else None."""
+        task = self.get_task(task_id)
+        if not task.depends_on_id:
+            return None
+        dep = self.task_repo.get_by_id(task.depends_on_id)
+        if not dep:
+            return None
+        if dep.status != TaskStatus.DONE:
+            return f"งาน \"{dep.title}\" (สถานะ: {dep.status.value}) ยังไม่เสร็จ"
+        return None
+
+    def get_dependent_tasks(self, task_id: int) -> List[Task]:
+        return self.task_repo.get_dependent_tasks(task_id)
+
     # ── Create ────────────────────────────────────────────────────
     def create_task(
         self,
@@ -48,6 +79,7 @@ class TaskService:
         created_by_id: Optional[int] = None,
         depends_on_id: Optional[int] = None,
     ) -> Task:
+        self._validate_dependency(None, depends_on_id)
         task = self.task_repo.create(
             title=title,
             description=description,
@@ -85,13 +117,24 @@ class TaskService:
     # ── Update ────────────────────────────────────────────────────
     def update_task(self, task_id: int, actor_id: Optional[int] = None,
                     **kwargs) -> Task:
+        # Validate dependency if being changed
+        if "depends_on_id" in kwargs:
+            self._validate_dependency(task_id, kwargs["depends_on_id"])
+
         task = self.get_task(task_id)
         changed = {k: (getattr(task, k), v) for k, v in kwargs.items()
                    if hasattr(task, k) and getattr(task, k) != v}
         updated = self.task_repo.update(task_id, **kwargs)
         for field, (old, new) in changed.items():
-            self._log(task_id, f"updated_{field}", detail=f"แก้ไข {field}",
-                      old_value=str(old), new_value=str(new), actor_id=actor_id)
+            if field == "depends_on_id":
+                old_name = self.task_repo.get_by_id(old).title if old else "ไม่มี"
+                new_name = self.task_repo.get_by_id(new).title if new else "ไม่มี"
+                self._log(task_id, "dependency_changed",
+                          detail=f"เปลี่ยนงานที่ต้องทำก่อน: {old_name} → {new_name}",
+                          old_value=str(old), new_value=str(new), actor_id=actor_id)
+            else:
+                self._log(task_id, f"updated_{field}", detail=f"แก้ไข {field}",
+                          old_value=str(old), new_value=str(new), actor_id=actor_id)
         return updated
 
     def change_status(self, task_id: int, new_status: TaskStatus,

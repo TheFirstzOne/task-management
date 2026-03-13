@@ -15,7 +15,7 @@ from app.services.team_service import TeamService
 from app.models.user import UserRole
 from app.utils.theme import (
     BG_DARK, BG_CARD, BG_INPUT,
-    ACCENT, TEXT_PRI, TEXT_SEC, BORDER,
+    ACCENT, ACCENT2, TEXT_PRI, TEXT_SEC, BORDER,
     COLOR_DONE, COLOR_URGENT,
 )
 
@@ -24,9 +24,9 @@ ROLE_OPTIONS = [r.value for r in UserRole]
 
 # ── Workload colour thresholds ────────────────────────────────────────────────
 def _workload_color(count: int) -> str:
-    if count <= 2:  return COLOR_DONE      # green
-    if count <= 4:  return "#FFC107"       # amber
-    return COLOR_URGENT                    # red
+    if count <= 2:  return "#00D4FF"       # cyan  — low load
+    if count <= 4:  return "#FFC107"       # amber — medium load
+    return COLOR_URGENT                    # red   — overloaded
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -112,7 +112,7 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         actions=[
             ft.TextButton("ยกเลิก", on_click=_close_team_dialog,
                           style=ft.ButtonStyle(color=TEXT_SEC)),
-            ft.Button("บันทึก", bgcolor=ACCENT, color=TEXT_PRI,
+            ft.Button("บันทึก", bgcolor=ACCENT, color="#FFFFFF",
                               on_click=_save_team),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
@@ -200,7 +200,7 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         actions=[
             ft.TextButton("ยกเลิก", on_click=_close_mem_dialog,
                           style=ft.ButtonStyle(color=TEXT_SEC)),
-            ft.Button("บันทึก", bgcolor=ACCENT, color=TEXT_PRI,
+            ft.Button("บันทึก", bgcolor=ACCENT, color="#FFFFFF",
                               on_click=_save_member),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
@@ -331,13 +331,13 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         role_chip = ft.Container(
             padding=ft.padding.symmetric(horizontal=8, vertical=2),
             border_radius=20,
-            bgcolor=ACCENT + "33",
+            bgcolor=ACCENT + "22",
             content=ft.Text(member.role.value, size=11, color=ACCENT),
         )
 
         active_icon = ft.IconButton(
             icon=ft.Icons.TOGGLE_ON if member.is_active else ft.Icons.TOGGLE_OFF,
-            icon_color=COLOR_DONE if member.is_active else TEXT_SEC,
+            icon_color=ACCENT2 if member.is_active else TEXT_SEC,
             icon_size=22,
             tooltip="เปิด/ปิด Active",
             on_click=lambda e, mid=member.id: _toggle_active(mid),
@@ -368,7 +368,7 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         )
 
         return ft.Container(
-            bgcolor="#1A1D26",
+            bgcolor=BG_INPUT,
             border_radius=8,
             border=ft.border.all(1, BORDER),
             padding=ft.padding.symmetric(horizontal=14, vertical=10),
@@ -377,11 +377,11 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
                     # Avatar
                     ft.Container(
                         width=36, height=36, border_radius=18,
-                        bgcolor=ACCENT + "44",
+                        bgcolor=ACCENT,
                         content=ft.Text(
                             member.name[0].upper(),
                             size=14, weight=ft.FontWeight.BOLD,
-                            color=ACCENT,
+                            color="#FFFFFF",
                             text_align=ft.TextAlign.CENTER,
                         ),
                         alignment=ft.alignment.Alignment.CENTER,
@@ -619,7 +619,7 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
             ft.Button(
                 "+ สร้างทีม",
                 icon=ft.Icons.ADD,
-                bgcolor=ACCENT, color=TEXT_PRI,
+                bgcolor=ACCENT, color="#FFFFFF",
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
                 on_click=_open_add_team,
             ),

@@ -59,7 +59,7 @@ Desktop application สำหรับจัดการงานและมอ
 | หัวข้อ | รายละเอียด |
 |---|---|
 | **Platform** | Windows Desktop (standalone .exe) |
-| **UI Theme** | Dark Mode ตลอดเวลา |
+| **UI Theme** | Blue-White (ฟ้า-ขาว) ถาวร |
 | **Database** | Local SQLite (offline-first, ไม่ต้องการ server) |
 | **Performance** | เปิดแอปได้ภายใน 3 วินาที |
 | **Usability** | ใช้งานได้โดยไม่ต้องเชื่อมต่อ internet |
@@ -180,5 +180,10 @@ flet pack main.py --name "Task Manager"
 | **Phase 4** | Calendar View | ✅ Done |
 | **Phase 5** | Summary & Export | ✅ Done |
 | **Phase 6** | History & Search | ✅ Done |
-| **Phase 7** | Bug Fix & QA Testing | 🔄 In Progress |
-| **Phase 8** | Build & Package (.exe) | 🔲 TODO |
+| **Phase 7** | Bug Fix & QA Testing + Task Dependencies | ✅ Done |
+| **Phase 8** | Build & Package (.exe) | ✅ Done |
+| **Phase 9** | Environment Recovery & UI Color Fix | ✅ Done |
+| **Phase 10** | Blue-White Theme | ✅ Done |
+| **Phase 11** | Export ธีมฟ้า-ขาว (PDF + Excel) | 🔜 Planned |
+| **Phase 12** | เลือกไฟล์ Database จากไดร์ฟกลาง (Shared SQLite + WAL + retry) | 🔜 Planned |
+| **Phase 13** | ระบบล็อกอิน (Admin สร้างบัญชี / Member login) | 🔜 Planned |
