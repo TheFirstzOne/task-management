@@ -14,6 +14,7 @@ NAV_ITEMS = [
     ("team",      ft.Icons.GROUP_OUTLINED,          "ทีมงาน"),
     ("task",      ft.Icons.TASK_ALT_OUTLINED,       "งาน"),
     ("calendar",  ft.Icons.CALENDAR_MONTH_OUTLINED, "ปฏิทิน"),
+    ("diary",     ft.Icons.BOOK_OUTLINED,           "บันทึกงาน"),
     ("summary",   ft.Icons.SUMMARIZE_OUTLINED,      "สรุปงาน"),
     ("history",   ft.Icons.HISTORY_OUTLINED,        "ประวัติ"),
 ]
@@ -33,6 +34,7 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         from app.views.team_view     import build_team_view
         from app.views.task_view     import build_task_view
         from app.views.calendar_view import build_calendar_view
+        from app.views.diary_view    import build_diary_view
         from app.views.summary_view  import build_summary_view
         from app.views.history_view  import build_history_view
 
@@ -41,6 +43,7 @@ def build_main_layout(page: ft.Page) -> ft.Control:
             "team":      lambda: build_team_view(db, page),
             "task":      lambda: build_task_view(db, page),
             "calendar":  lambda: build_calendar_view(db, page),
+            "diary":     lambda: build_diary_view(db, page),
             "summary":   lambda: build_summary_view(db, page),
             "history":   lambda: build_history_view(db, page),
         }

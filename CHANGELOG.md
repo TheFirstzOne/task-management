@@ -276,11 +276,56 @@
 
 ---
 
+---
+
+## Phase 11 — JobDiary Integration + Export Theme Fix ✅ (15 มี.ค. 2569)
+
+### Session: 15 มีนาคม 2569
+
+#### Feature — บันทึกการทำงานรายวัน (JobDiary)
+- รวมโปรเจค `JobdiaryRecord` เข้าเป็น feature ใหม่ใน TaskFlow
+- **Model:** `app/models/diary.py` — ตาราง `diary_entries` (id, content, created_at, updated_at)
+- **Repository:** `app/repositories/diary_repo.py` — CRUD + `get_grouped_by_date()`
+- **Service:** `app/services/diary_service.py` — Business logic + `export_to_word()`
+- **View:** `app/views/diary_view.py`
+  - Custom tab bar (ไม่ใช้ `ft.Tabs` เพราะ Flet 0.82 ไม่รองรับ `text=` parameter)
+  - Tab 1: "บันทึกใหม่" — กรอกข้อความ + บันทึกลง SQLite + ปุ่ม Export Word
+  - Tab 2: "อ่านย้อนหลัง" — แสดงรายการตามวันที่ (left panel) + เนื้อหา (right panel)
+- **Navigation:** เพิ่ม nav item "บันทึกงาน" (`ft.Icons.BOOK_OUTLINED`) ใน sidebar
+- **Dependency:** เพิ่ม `python-docx>=1.1.0` ใน `requirements.txt` + `TaskFlow.spec`
+- **Word Export:** บันทึกบันทึกทั้งหมดเป็น `data/job_diary.docx` พร้อมเปิดไฟล์อัตโนมัติ
+
+#### Export Fix — PDF และ Excel ธีมฟ้า-ขาว
+- **PDF (`summary_view.py`):**
+  - แก้ไข hardcoded dark colors ทั้งหมดให้ตรงกับ Blue-White theme
+  - **Thai Font Fix:** Register font `Tahoma` (`C:\Windows\Fonts\tahoma.ttf`) กับ ReportLab — แก้ปัญหาภาษาไทยแสดงเป็น ■■■ ใน PDF
+  - ใช้ `fontName` ใน ParagraphStyle และ `FONTNAME` command ใน TableStyle ทุกตาราง
+
+  | ส่วน | เดิม (Dark) | ใหม่ (Blue-White) |
+  |---|---|---|
+  | Title | `#6C63FF` (ม่วง) | `#2563EB` (น้ำเงิน) |
+  | Section header BG | `#1E2028` (ดำ) | `#2563EB` (น้ำเงิน) |
+  | ข้อความปกติ | `#F0F2F5` (ขาว) | `#1E293B` (ดำเข้ม) |
+  | Table header BG | `#1E2028` (ดำ) | `#2563EB` (น้ำเงิน) |
+  | Table header text | `#6C63FF` (ม่วง) | `#FFFFFF` (ขาว) |
+  | แถวข้อมูล | `#16181F`/`#1E2028` (ดำ) | `#FFFFFF`/`#F0F4F8` (ขาว) |
+  | เส้นตาราง | `#2A2D3A` (เข้ม) | `#CBD5E1` (เทาอ่อน) |
+
+- **Excel (`summary_view.py`):**
+  - Header fill: `#1E2028` → `#2563EB` (น้ำเงิน)
+  - Header font: `#6C63FF` (ม่วง) → `#FFFFFF` (ขาว)
+
+#### Build Fix
+- ลบ `version=` ที่ชี้ไป temp file ที่หายไปออกจาก `TaskFlow.spec`
+- เพิ่ม `docx`, `lxml`, `lxml.etree` ใน `hiddenimports`
+- **ผลลัพธ์:** `TaskFlow.exe` build สำเร็จ
+
+---
+
 ### สิ่งที่ต้องทำเพิ่มเติม (Planned)
 
 | รายการ | รายละเอียด |
 |---|---|
-| Export PDF ธีมฟ้า-ขาว | `summary_view.py` ยังใช้สี dark ใน PDF export — ปรับให้ตรงกับ UI |
-| Export Excel ธีมฟ้า-ขาว | ปรับสี header/cell ใน Excel export ให้ตรงกับ Blue-White theme |
 | เลือกไฟล์ Database จากไดร์ฟกลาง | วางไฟล์ SQLite ไว้บน shared drive ของทีม + `PRAGMA journal_mode=WAL` + `busy_timeout` + retry logic สำหรับทีมเล็ก (2-5 คน) |
 | ระบบล็อกอิน | Admin สร้างบัญชี username/password ให้สมาชิก, แบ่ง Role (Admin/Member), บันทึกผู้ใช้ใน history log อัตโนมัติ |
+| พิจารณาเปลี่ยนเป็น Web App | ศึกษาความเป็นไปได้ในการ migrate จาก Desktop → Web โดยใช้ Flet Web หรือเปลี่ยน framework |

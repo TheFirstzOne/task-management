@@ -86,6 +86,7 @@ Desktop application สำหรับจัดการงานและมอ
 | `python-dateutil` | >= 2.9.0 | จัดการวันที่และ timezone ซับซ้อน |
 | `openpyxl` | >= 3.1.0 | Export รายงานเป็น Excel (.xlsx) |
 | `reportlab` | >= 4.0.0 | Export รายงานเป็น PDF |
+| `python-docx` | >= 1.1.0 | Export บันทึกการทำงานเป็น Word (.docx) |
 
 ### 4.3 Development Tools
 
@@ -107,24 +108,28 @@ task_manager/
 │   │   ├── user.py
 │   │   ├── team.py
 │   │   ├── task.py
-│   │   └── history.py
+│   │   ├── history.py
+│   │   └── diary.py         # Phase 11: บันทึกการทำงานรายวัน
 │   ├── repositories/        # Database CRUD operations
 │   │   ├── user_repo.py
 │   │   ├── team_repo.py
-│   │   └── task_repo.py
+│   │   ├── task_repo.py
+│   │   └── diary_repo.py    # Phase 11
 │   ├── services/            # Business logic
 │   │   ├── team_service.py
-│   │   └── task_service.py
+│   │   ├── task_service.py
+│   │   └── diary_service.py # Phase 11
 │   ├── views/               # Flet UI components
 │   │   ├── main_layout.py
 │   │   ├── team_view.py
 │   │   ├── task_view.py
 │   │   ├── calendar_view.py
+│   │   ├── diary_view.py    # Phase 11: บันทึกการทำงานรายวัน
 │   │   ├── summary_view.py
 │   │   └── history_view.py
 │   └── utils/               # Helpers, exporters
 ├── assets/
-├── data/                    # SQLite file
+├── data/                    # SQLite file + Word export
 └── requirements.txt
 ```
 
@@ -148,6 +153,7 @@ teams ──────┘         └──► work_history
 | `tasks` | งานหลัก พร้อม status, priority, deadline |
 | `task_comments` | Comment/Note ต่องานแบบ timeline |
 | `work_history` | Action log ทุกการเปลี่ยนแปลง |
+| `diary_entries` | บันทึกการทำงานรายวัน (Phase 11) |
 
 ---
 
@@ -184,6 +190,7 @@ flet pack main.py --name "Task Manager"
 | **Phase 8** | Build & Package (.exe) | ✅ Done |
 | **Phase 9** | Environment Recovery & UI Color Fix | ✅ Done |
 | **Phase 10** | Blue-White Theme | ✅ Done |
-| **Phase 11** | Export ธีมฟ้า-ขาว (PDF + Excel) | 🔜 Planned |
+| **Phase 11** | JobDiary Integration + Export PDF/Excel Blue-White Theme + Thai Font Fix | ✅ Done |
 | **Phase 12** | เลือกไฟล์ Database จากไดร์ฟกลาง (Shared SQLite + WAL + retry) | 🔜 Planned |
 | **Phase 13** | ระบบล็อกอิน (Admin สร้างบัญชี / Member login) | 🔜 Planned |
+| **Phase 14** | พิจารณา Web App Migration (Flet Web / FastAPI + React) | 🔜 Planned |

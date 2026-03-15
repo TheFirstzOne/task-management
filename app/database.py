@@ -46,5 +46,5 @@ def get_db():
 def init_db() -> None:
     """Create all tables if they do not exist yet."""
     # Import models so SQLAlchemy registers them before create_all
-    from app.models import user, team, task, history  # noqa: F401
+    from app.models import user, team, task, history, diary  # noqa: F401
     Base.metadata.create_all(bind=engine)

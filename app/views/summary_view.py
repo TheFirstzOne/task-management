@@ -330,8 +330,8 @@ def build_summary_view(db: Session, page: ft.Page) -> ft.Control:
         ws1 = wb.active
         ws1.title = "รายการงาน"
 
-        hdr_fill = PatternFill("solid", fgColor="1E2028")
-        hdr_font = Font(color="6C63FF", bold=True)
+        hdr_fill = PatternFill("solid", fgColor="2563EB")   # ACCENT blue-white theme
+        hdr_font = Font(color="FFFFFF", bold=True)
 
         headers = ["ID", "ชื่องาน", "สถานะ", "Priority",
                    "ผู้รับผิดชอบ", "ทีม", "วันกำหนด", "เกินกำหนด"]
@@ -405,6 +405,25 @@ def build_summary_view(db: Session, page: ft.Page) -> ft.Control:
             _snack("ไม่พบ reportlab — กรุณา pip install reportlab", COLOR_OVERDUE)
             return
 
+        # ── Register Thai font (Tahoma — built-in Windows, supports Thai) ──
+        import sys
+        _FONT_NAME = "Tahoma"
+        _font_registered = False
+        _font_candidates = [
+            r"C:\Windows\Fonts\tahoma.ttf",
+            "/usr/share/fonts/truetype/msttcorefonts/Tahoma.ttf",
+        ]
+        for _fp in _font_candidates:
+            if os.path.exists(_fp):
+                try:
+                    pdfmetrics.registerFont(TTFont(_FONT_NAME, _fp))
+                    _font_registered = True
+                except Exception:
+                    pass
+                break
+        if not _font_registered:
+            _FONT_NAME = "Helvetica"   # fallback — no Thai support
+
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
         out  = os.path.join(os.path.expanduser("~"), "Desktop",
                             f"TaskReport_{ts}.pdf")
@@ -418,37 +437,43 @@ def build_summary_view(db: Session, page: ft.Page) -> ft.Control:
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
             "title", parent=styles["Heading1"],
-            fontSize=16, textColor=rl_colors.HexColor("#6C63FF"),
+            fontSize=16, textColor=rl_colors.HexColor("#2563EB"),
+            fontName=_FONT_NAME,
         )
         h2_style = ParagraphStyle(
             "h2", parent=styles["Heading2"],
-            fontSize=12, textColor=rl_colors.HexColor("#F0F2F5"),
-            backColor=rl_colors.HexColor("#1E2028"),
+            fontSize=12, textColor=rl_colors.HexColor("#FFFFFF"),
+            backColor=rl_colors.HexColor("#2563EB"),
             spaceBefore=14,
+            fontName=_FONT_NAME,
         )
         normal = ParagraphStyle(
             "normal", parent=styles["Normal"],
-            fontSize=9, textColor=rl_colors.HexColor("#F0F2F5"),
+            fontSize=9, textColor=rl_colors.HexColor("#1E293B"),
+            fontName=_FONT_NAME,
         )
 
-        _HDR_BG   = rl_colors.HexColor("#1E2028")
-        _ACCENT   = rl_colors.HexColor("#6C63FF")
-        _TEXT     = rl_colors.HexColor("#F0F2F5")
-        _TEXT_SEC = rl_colors.HexColor("#8B8FA8")
-        _RED      = rl_colors.HexColor("#FF5252")
-        _BORDER   = rl_colors.HexColor("#2A2D3A")
+        _HDR_BG   = rl_colors.HexColor("#2563EB")   # ACCENT
+        _ACCENT   = rl_colors.HexColor("#FFFFFF")   # white text on blue header
+        _TEXT     = rl_colors.HexColor("#1E293B")   # TEXT_PRI
+        _TEXT_SEC = rl_colors.HexColor("#64748B")   # TEXT_SEC
+        _RED      = rl_colors.HexColor("#EF4444")   # COLOR_OVERDUE
+        _BORDER   = rl_colors.HexColor("#CBD5E1")   # BORDER
 
         def _tbl_style(ncols: int) -> TableStyle:
             return TableStyle([
-                ("BACKGROUND", (0, 0), (ncols-1, 0), _HDR_BG),
-                ("TEXTCOLOR",  (0, 0), (ncols-1, 0), _ACCENT),
-                ("FONTSIZE",   (0, 0), (ncols-1, -1), 8),
-                ("TEXTCOLOR",  (0, 1), (ncols-1, -1), _TEXT),
-                ("GRID",       (0, 0), (ncols-1, -1), 0.4, _BORDER),
+                ("BACKGROUND",  (0, 0), (ncols-1, 0), _HDR_BG),
+                ("TEXTCOLOR",   (0, 0), (ncols-1, 0), _ACCENT),
+                ("FONTNAME",    (0, 0), (ncols-1, 0), _FONT_NAME),   # header font
+                ("FONTSIZE",    (0, 0), (ncols-1, 0), 9),
+                ("TEXTCOLOR",   (0, 1), (ncols-1, -1), _TEXT),
+                ("FONTNAME",    (0, 1), (ncols-1, -1), _FONT_NAME),   # data font
+                ("FONTSIZE",    (0, 1), (ncols-1, -1), 8),
+                ("GRID",        (0, 0), (ncols-1, -1), 0.4, _BORDER),
                 ("ROWBACKGROUNDS", (0, 1), (ncols-1, -1),
-                 [rl_colors.HexColor("#16181F"), rl_colors.HexColor("#1E2028")]),
-                ("VALIGN",     (0, 0), (ncols-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (ncols-1, -1), 5),
+                 [rl_colors.HexColor("#FFFFFF"), rl_colors.HexColor("#F0F4F8")]),
+                ("VALIGN",      (0, 0), (ncols-1, -1), "MIDDLE"),
+                ("TOPPADDING",  (0, 0), (ncols-1, -1), 5),
                 ("BOTTOMPADDING", (0, 0), (ncols-1, -1), 5),
             ])
 
