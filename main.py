@@ -7,24 +7,24 @@ import sys
 import asyncio
 
 # ── Suppress Windows asyncio pipe cleanup error ──────────────────
-# ConnectionResetError [WinError 10054] is a known harmless bug
-# in Python's ProactorEventLoop on Windows.
+# ConnectionResetError [WinError 10054] is a known harmless Windows bug:
+# ProactorEventLoop tries to call shutdown() on an already-closed socket
+# during app exit.  ft.run() creates its own event loop internally, so
+# setting a custom loop/handler before calling ft.run() has no effect.
+# The reliable fix is to monkey-patch the method at class level so the
+# suppression applies regardless of which loop Flet uses.
 if sys.platform == "win32":
-    _orig_handler = None
+    from asyncio import proactor_events as _pe
 
-    def _suppress_connection_reset(loop, context):
-        exc = context.get("exception")
-        if isinstance(exc, ConnectionResetError):
-            return                          # silently ignore
-        if _orig_handler:
-            _orig_handler(context)          # forward everything else
-        else:
-            loop.default_exception_handler(context)
+    _orig_ccl = _pe._ProactorBasePipeTransport._call_connection_lost
 
-    _loop = asyncio.new_event_loop()
-    _orig_handler = _loop.get_exception_handler()
-    _loop.set_exception_handler(_suppress_connection_reset)
-    asyncio.set_event_loop(_loop)
+    def _patched_ccl(self, exc):
+        try:
+            _orig_ccl(self, exc)
+        except ConnectionResetError:
+            pass   # harmless — socket already closed by the remote host
+
+    _pe._ProactorBasePipeTransport._call_connection_lost = _patched_ccl
 
 import flet as ft
 from app.database import init_db
@@ -34,7 +34,7 @@ import app.utils.theme as theme
 
 def main(page: ft.Page) -> None:
     # ── Window settings ──────────────────────────────────────────
-    page.title = "Task Manager"
+    page.title = "VindFlow"
     page.window.width      = 1280
     page.window.height     = 800
     page.window.min_width  = 960

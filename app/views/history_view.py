@@ -31,6 +31,10 @@ from app.utils.theme import (
     COLOR_IN_PROGRESS, COLOR_REVIEW, COLOR_CANCELLED,
 )
 
+from app.utils.logger import get_logger
+from app.utils.ui_helpers import show_snack, safe_update
+logger = get_logger(__name__)
+
 ALL_OPT = "ทั้งหมด"
 PAGE_SIZE = 50
 
@@ -118,7 +122,8 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
         try:
             d, m, y_be = val.split("/")
             return date(int(y_be) - 543, int(m), int(d))
-        except Exception:
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
             return None
 
     def _filter(entries: List[WorkHistory]) -> List[WorkHistory]:
@@ -318,12 +323,9 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
             btn_next,
         ]
 
-        try:
-            count_text.update()
-            list_col.update()
-            pager_row.update()
-        except Exception:
-            pass
+        safe_update(count_text)
+        safe_update(list_col)
+        safe_update(pager_row)
 
     def _go_page(n: int):
         state["page_num"] = n
@@ -362,10 +364,7 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
         tf_from.value     = ""
         tf_to.value       = ""
         for ctrl in [tf_search, dd_action, dd_actor, tf_from, tf_to]:
-            try:
-                ctrl.update()
-            except Exception:
-                pass
+            safe_update(ctrl)
         _rebuild()
 
     # ══════════════════════════════════════════════════════════════

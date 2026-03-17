@@ -6,9 +6,10 @@ from datetime import datetime
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.models.task import Task, SubTask, TaskComment, TaskStatus, TaskPriority
+from app.repositories.base import BaseRepository
 
 
-class TaskRepository:
+class TaskRepository(BaseRepository[Task]):
 
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -46,15 +47,19 @@ class TaskRepository:
 
     # ── Task Read ─────────────────────────────────────────────────
     def get_by_id(self, task_id: int) -> Optional[Task]:
-        return self.db.query(Task).filter(Task.id == task_id).first()
+        return (self.db.query(Task)
+                .filter(Task.id == task_id, Task.is_deleted == False)  # noqa: E712
+                .first())
 
     def get_all(self) -> List[Task]:
-        return self.db.query(Task).order_by(Task.created_at.desc()).all()
+        return (self.db.query(Task)
+                .filter(Task.is_deleted == False)  # noqa: E712
+                .order_by(Task.created_at.desc()).all())
 
     def get_by_team(self, team_id: int) -> List[Task]:
         return (
             self.db.query(Task)
-            .filter(Task.team_id == team_id)
+            .filter(Task.team_id == team_id, Task.is_deleted == False)  # noqa: E712
             .order_by(Task.due_date.asc())
             .all()
         )
@@ -62,19 +67,20 @@ class TaskRepository:
     def get_by_assignee(self, user_id: int) -> List[Task]:
         return (
             self.db.query(Task)
-            .filter(Task.assignee_id == user_id)
+            .filter(Task.assignee_id == user_id, Task.is_deleted == False)  # noqa: E712
             .order_by(Task.due_date.asc())
             .all()
         )
 
     def get_by_status(self, status: TaskStatus) -> List[Task]:
-        return self.db.query(Task).filter(Task.status == status).all()
+        return self.db.query(Task).filter(Task.status == status, Task.is_deleted == False).all()  # noqa: E712
 
     def get_overdue(self) -> List[Task]:
         now = datetime.utcnow()
         return (
             self.db.query(Task)
-            .filter(Task.due_date < now, Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]))
+            .filter(Task.due_date < now, Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+                    Task.is_deleted == False)  # noqa: E712
             .all()
         )
 
@@ -120,6 +126,15 @@ class TaskRepository:
         task = self.get_by_id(task_id)
         if not task:
             return False
+        task.is_deleted = True
+        self.db.commit()
+        return True
+
+    def delete_permanent(self, task_id: int) -> bool:
+        """Hard delete — permanently removes from database."""
+        task = self.get_by_id(task_id)
+        if not task:
+            return False
         self.db.delete(task)
         self.db.commit()
         return True
@@ -142,6 +157,18 @@ class TaskRepository:
         return subtask
 
     def delete_subtask(self, subtask_id: int) -> bool:
+        """Soft-delete a subtask by setting is_deleted = True."""
+        subtask = (self.db.query(SubTask)
+                   .filter(SubTask.id == subtask_id, SubTask.is_deleted == False)  # noqa: E712
+                   .first())
+        if not subtask:
+            return False
+        subtask.is_deleted = True
+        self.db.commit()
+        return True
+
+    def delete_subtask_permanent(self, subtask_id: int) -> bool:
+        """Hard delete — permanently removes subtask from database."""
         subtask = self.db.query(SubTask).filter(SubTask.id == subtask_id).first()
         if not subtask:
             return False

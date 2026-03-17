@@ -4,12 +4,12 @@ DiaryRepository — CRUD operations for DiaryEntry
 
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.models.diary import DiaryEntry
+from app.repositories.base import BaseRepository
 
 
-class DiaryRepository:
+class DiaryRepository(BaseRepository[DiaryEntry]):
 
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -27,7 +27,9 @@ class DiaryRepository:
         return self.db.query(DiaryEntry).filter(DiaryEntry.id == entry_id).first()
 
     def get_all(self) -> List[DiaryEntry]:
-        return self.db.query(DiaryEntry).order_by(DiaryEntry.created_at.desc()).all()
+        return (self.db.query(DiaryEntry)
+                .order_by(DiaryEntry.created_at.desc(), DiaryEntry.id.desc())
+                .all())
 
     def get_by_date(self, date: datetime) -> List[DiaryEntry]:
         """Get entries for a specific date (ignoring time)."""

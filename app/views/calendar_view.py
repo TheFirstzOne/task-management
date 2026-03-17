@@ -28,6 +28,9 @@ from app.utils.theme import (
     status_color, priority_color,
 )
 from app.utils.date_helpers import format_date
+from app.utils.logger import get_logger
+from app.utils.ui_helpers import show_snack, safe_update
+logger = get_logger(__name__)
 
 # ── Thai month names ──────────────────────────────────────────────────────────
 THAI_MONTHS = [
@@ -146,8 +149,8 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
         dd_member.value   = ALL_OPT
         try:
             dd_member.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
         _rebuild_calendar()
 
     def _on_filter(key: str, val):
@@ -270,8 +273,8 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
         day_panel.visible = False
         try:
             day_panel.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
         _rebuild_calendar()
 
     # ══════════════════════════════════════════════════════════════
@@ -366,10 +369,7 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
 
         # Update header
         header_title.value = f"{THAI_MONTHS[month]}  {year + 543}"
-        try:
-            header_title.update()
-        except Exception:
-            pass
+        safe_update(header_title)
 
         tasks    = _get_filtered_tasks()
         by_day   = _tasks_by_day(tasks)
@@ -412,10 +412,7 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
             week_rows.append(ft.Row(controls=cells, spacing=4, expand=True))
 
         cal_grid.controls = [day_headers] + week_rows
-        try:
-            cal_grid.update()
-        except Exception:
-            pass
+        safe_update(cal_grid)
 
     def _rebuild_calendar():
         _build_grid()
@@ -427,8 +424,8 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
             day_panel.content = _build_day_panel(state["selected_day"], d_tasks)
             try:
                 day_panel.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
 
     def _on_day_click(d: date):
         if state["selected_day"] == d:
@@ -442,8 +439,8 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
         day_panel.visible = True
         try:
             day_panel.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
         _build_grid()   # re-render grid to highlight selected
 
     # Navigation

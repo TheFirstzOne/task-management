@@ -8,6 +8,9 @@ import flet as ft
 from app.services.diary_service import DiaryService
 from app.database import DATA_DIR
 import app.utils.theme as theme
+from app.utils.logger import get_logger
+from app.utils.ui_helpers import show_snack
+logger = get_logger(__name__)
 
 
 def build_diary_view(db, page: ft.Page) -> ft.Control:
@@ -53,15 +56,17 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
         filepath = os.path.join(DATA_DIR, "job_diary.docx")
         try:
             svc.export_to_word(filepath)
-            status_text.value = f"Export สำเร็จ: {filepath}"
+            status_text.value = f"Export สำเร็จ: {os.path.basename(filepath)}"
             status_text.color = theme.COLOR_DONE
             page.update()
             # Open with default Word app
             try:
                 os.startfile(filepath)
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug("open file failed: %s", ex)
         except Exception as ex:
+            logger.error("save failed: %s", ex, exc_info=True)
+            show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
             status_text.value = f"Export ผิดพลาด: {ex}"
             status_text.color = theme.COLOR_OVERDUE
             page.update()

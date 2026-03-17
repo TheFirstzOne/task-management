@@ -18,6 +18,9 @@ from app.utils.theme import (
     ACCENT, ACCENT2, TEXT_PRI, TEXT_SEC, BORDER,
     COLOR_DONE, COLOR_URGENT,
 )
+from app.utils.logger import get_logger
+from app.utils.ui_helpers import show_snack, safe_update
+logger = get_logger(__name__)
 
 # ── Role options ──────────────────────────────────────────────────────────────
 ROLE_OPTIONS = [r.value for r in UserRole]
@@ -70,8 +73,8 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         _editing_team_id["value"] = None
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _save_team(e):
         name = (tf_team_name.value or "").strip()
@@ -80,8 +83,8 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
             team_dialog_err.value = "กรุณาใส่ชื่อทีม"
             try:
                 page.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
             return
         try:
             if _editing_team_id["value"]:
@@ -94,8 +97,8 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
             team_dialog_err.value = str(ex)
             try:
                 page.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
 
     team_dlg = ft.AlertDialog(
         modal=True,
@@ -154,8 +157,8 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         _editing_member_id["value"] = None
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _save_member(e):
         name   = (tf_mem_name.value or "").strip()
@@ -165,8 +168,8 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
             mem_dialog_err.value = "กรุณาใส่ชื่อสมาชิก"
             try:
                 page.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
             return
         try:
             if _editing_member_id["value"]:
@@ -179,11 +182,13 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
             _close_mem_dialog()
             _refresh_teams()
         except Exception as ex:
+            logger.error("save failed: %s", ex, exc_info=True)
+            show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
             mem_dialog_err.value = str(ex)
             try:
                 page.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
 
     mem_dlg = ft.AlertDialog(
         modal=True,
@@ -214,8 +219,8 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         confirm_dlg.open = False
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _do_confirm(e):
         _close_confirm()
@@ -252,8 +257,8 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         team_dlg.open = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _open_edit_team(team):
         team_dialog_title.value = "แก้ไขทีม"
@@ -264,22 +269,30 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         team_dlg.open = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _open_delete_team(team):
-        confirm_msg.value = f'ต้องการลบทีม "{team.name}" ใช่ไหม? สมาชิกจะถูก unassign ออกจากทีม'
+        confirm_msg.value = (
+            f'ต้องการลบทีม "{team.name}" ใช่ไหม?\n'
+            f'สมาชิกทุกคนจะถูก unassign ออกจากทีม (ยังคงอยู่ในระบบ)'
+        )
         def _do():
-            svc.delete_team(team.id)
-            if selected_team_id["value"] == team.id:
-                selected_team_id["value"] = None
+            try:
+                svc.delete_team(team.id)
+                if selected_team_id["value"] == team.id:
+                    selected_team_id["value"] = None
+                show_snack(page, f'ลบทีม "{team.name}" เรียบร้อย')
+            except Exception as ex:
+                logger.error("delete team failed: %s", ex, exc_info=True)
+                show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
             _refresh_teams()
         _confirm_action["fn"] = _do
         confirm_dlg.open = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _open_add_member(team_id: int):
         mem_dialog_title.value = "เพิ่มสมาชิก"
@@ -292,8 +305,8 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         mem_dlg.open = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _open_edit_member(member):
         mem_dialog_title.value = "แก้ไขสมาชิก"
@@ -306,20 +319,28 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
         mem_dlg.open = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _open_delete_member(member):
-        confirm_msg.value = f'ต้องการลบ "{member.name}" ออกจากทีมใช่ไหม?'
+        confirm_msg.value = (
+            f'ต้องการลบ "{member.name}" ออกจากระบบใช่ไหม?\n'
+            f'งานที่ยังดำเนินอยู่จะถูก unassign โดยอัตโนมัติ'
+        )
         def _do():
-            svc.user_repo.delete(member.id)
+            try:
+                svc.delete_member(member.id)
+                show_snack(page, f'ลบสมาชิก "{member.name}" เรียบร้อย')
+            except Exception as ex:
+                logger.error("delete member failed: %s", ex, exc_info=True)
+                show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
             _refresh_teams()
         _confirm_action["fn"] = _do
         confirm_dlg.open = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     # ═══════════════════════════════════════════════════════════════
     #  BUILD: member row
@@ -595,10 +616,7 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
                     ),
                 )
             ]
-        try:
-            team_cards_col.update()
-        except Exception:
-            pass   # Not yet mounted on page — will render on first add
+        safe_update(team_cards_col)
 
     # Initial load
     _refresh_teams()

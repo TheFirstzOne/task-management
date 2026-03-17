@@ -27,6 +27,9 @@ from app.utils.theme import (
     status_color, priority_color,
 )
 from app.utils.date_helpers import format_date, is_overdue, days_until
+from app.utils.logger import get_logger
+from app.utils.ui_helpers import show_snack, safe_update
+logger = get_logger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 STATUS_LIST   = [s.value for s in TaskStatus]
@@ -84,6 +87,10 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     filter_status:    dict = {"value": "ทั้งหมด"}
     filter_priority:  dict = {"value": "ทั้งหมด"}
     search_query:     dict = {"value": ""}
+    sort_order:       dict = {"value": "สร้างล่าสุด"}
+
+    SORT_OPTIONS = ["สร้างล่าสุด", "เก่าสุด", "ครบกำหนด", "Priority", "ชื่อ"]
+    PRIO_ORDER   = {"Urgent": 0, "High": 1, "Medium": 2, "Low": 3}
 
     # ── Layout refs ────────────────────────────────────────────────
     task_list_col  = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
@@ -151,8 +158,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             tf_start_date.value = local.strftime("%d/%m/%Y")
             try:
                 tf_start_date.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
 
     def _on_due_date_picked(e):
         if due_date_picker.value:
@@ -160,8 +167,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             tf_due_date.value = local.strftime("%d/%m/%Y")
             try:
                 tf_due_date.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
 
     def _open_date_picker(picker):
         """Open DatePicker using page.show_dialog (recommended for Flet 0.82)."""
@@ -270,8 +277,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         _editing_task_id["value"] = None
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _save_task(e):
         title = (tf_title.value or "").strip()
@@ -279,8 +286,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             task_dlg_err.value = "กรุณาใส่ชื่องาน"
             try:
                 page.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
             return
         try:
             start = _parse_date(tf_start_date.value)
@@ -289,8 +296,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             task_dlg_err.value = str(ex)
             try:
                 page.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
             return
 
         team_id = None
@@ -343,11 +350,13 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             _close_task_dialog()
             _refresh_tasks()
         except Exception as ex:
+            logger.error("save failed: %s", ex, exc_info=True)
+            show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
             task_dlg_err.value = str(ex)
             try:
                 page.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
 
     task_dlg = ft.AlertDialog(
         modal=True,
@@ -391,8 +400,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         confirm_dlg.open = False
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _do_confirm(e):
         _close_confirm()
@@ -426,8 +435,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         dd_assignee.value = "none"
         try:
             dd_assignee.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     dd_team_dlg.on_select = _on_team_dlg_change
 
@@ -447,8 +456,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         task_dlg.open = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _open_edit(task):
         task_dlg_title.value = "แก้ไขงาน"
@@ -469,8 +478,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         task_dlg.open        = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     def _open_delete(task):
         confirm_msg.value = f'ต้องการลบงาน "{task.title}" ใช่ไหม?'
@@ -484,8 +493,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         confirm_dlg.open = True
         try:
             page.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     # ══════════════════════════════════════════════════════════════
     #  DEPENDENCY HELPERS (for detail panel)
@@ -598,13 +607,28 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
 
         def _refresh_subtasks():
             db.refresh(task)
+            # Filter out soft-deleted subtasks before rendering
             subtask_col.controls = [
                 _subtask_row(st) for st in (task.subtasks or [])
+                if not getattr(st, "is_deleted", False)
             ]
             try:
                 subtask_col.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
+
+        def _confirm_delete_subtask(sid: int, title: str):
+            """Show confirmation dialog before soft-deleting a subtask."""
+            confirm_msg.value = f'ต้องการลบ sub-task "{title}" ใช่ไหม?'
+            def _do():
+                task_svc.delete_subtask(sid)
+                _refresh_subtasks()
+            _confirm_fn["value"] = _do
+            confirm_dlg.open = True
+            try:
+                page.update()
+            except Exception as ex:
+                logger.warning("open confirm subtask delete failed: %s", ex, exc_info=True)
 
         def _subtask_row(st) -> ft.Row:
             return ft.Row(
@@ -625,9 +649,9 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                     ft.IconButton(
                         icon=ft.Icons.CLOSE, icon_size=14,
                         icon_color=TEXT_SEC,
-                        on_click=lambda e, sid=st.id: (
-                            task_svc.delete_subtask(sid),
-                            _refresh_subtasks(),
+                        tooltip="ลบ sub-task",
+                        on_click=lambda e, sid=st.id, t=st.title: (
+                            _confirm_delete_subtask(sid, t)
                         ),
                     ),
                 ],
@@ -643,8 +667,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 _refresh_subtasks()
                 try:
                     page.update()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("load failed: %s", e, exc_info=True)
 
         _refresh_subtasks()
 
@@ -663,8 +687,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             comment_col.controls = [_comment_bubble(c) for c in comments]
             try:
                 comment_col.update()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
 
         def _comment_bubble(c) -> ft.Container:
             author_name = c.author.name if c.author else "ระบบ"
@@ -710,8 +734,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 _refresh_comments()
                 try:
                     page.update()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("load failed: %s", e, exc_info=True)
 
         _refresh_comments()
 
@@ -844,6 +868,13 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         left_accent_color = priority_color(task.priority.value)
         assignee_name = task.assignee.name if task.assignee else "—"
 
+        # Subtask progress
+        _all_st  = [st for st in (task.subtasks or [])
+                    if not getattr(st, "is_deleted", False)]
+        _done_st = sum(1 for st in _all_st if st.is_done)
+        _total_st = len(_all_st)
+        _st_color = COLOR_DONE if (_total_st > 0 and _done_st == _total_st) else TEXT_SEC
+
         tags_row = ft.Row(
             controls=[
                 ft.Container(
@@ -896,6 +927,15 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                                             color=COLOR_URGENT if overdue else TEXT_SEC,
                                             size=13),
                                     _due_label(task.due_date),
+                                    *([
+                                        ft.Container(
+                                            width=1, height=12, bgcolor=BORDER,
+                                        ),
+                                        ft.Icon(ft.Icons.CHECKLIST,
+                                                color=_st_color, size=13),
+                                        ft.Text(f"{_done_st}/{_total_st}",
+                                                size=11, color=_st_color),
+                                    ] if _total_st > 0 else []),
                                     tags_row,
                                 ],
                                 spacing=4,
@@ -955,8 +995,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 )
                 try:
                     page.show_dialog(snack)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("load failed: %s", e, exc_info=True)
 
         task_svc.change_status(task.id, TaskStatus(new_status_str))
         _refresh_tasks()
@@ -973,8 +1013,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         detail_panel.visible = True
         try:
             detail_panel.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
         _refresh_task_list_only()
 
     def _close_detail():
@@ -982,17 +1022,14 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         detail_panel.visible = False
         try:
             detail_panel.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
         _refresh_task_list_only()
 
     def _refresh_task_list_only():
         tasks = _filtered_tasks()
         task_list_col.controls = [_build_task_row(t) for t in tasks] or [_empty_state()]
-        try:
-            task_list_col.update()
-        except Exception:
-            pass
+        safe_update(task_list_col)
 
     def _refresh_tasks():
         _refresh_task_list_only()
@@ -1002,7 +1039,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 fresh = task_svc.get_task(selected_task_id["value"])
                 detail_panel.content = _build_detail_panel(fresh)
                 detail_panel.update()
-            except Exception:
+            except Exception as e:
+                logger.warning("load failed: %s", e, exc_info=True)
                 _close_detail()
 
     def _filtered_tasks():
@@ -1018,6 +1056,18 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             tasks = [t for t in tasks if sq in t.title.lower()
                      or sq in (t.description or "").lower()
                      or sq in (t.tags or "").lower()]
+        # ── Sort ────────────────────────────────────────────────
+        so = sort_order["value"]
+        if so == "สร้างล่าสุด":
+            tasks.sort(key=lambda t: t.created_at, reverse=True)
+        elif so == "เก่าสุด":
+            tasks.sort(key=lambda t: t.created_at)
+        elif so == "ครบกำหนด":
+            tasks.sort(key=lambda t: (t.due_date is None, t.due_date or datetime.max))
+        elif so == "Priority":
+            tasks.sort(key=lambda t: PRIO_ORDER.get(t.priority.value, 99))
+        elif so == "ชื่อ":
+            tasks.sort(key=lambda t: t.title.lower())
         return tasks
 
     def _empty_state() -> ft.Container:
@@ -1069,7 +1119,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                            lambda: (_refresh_task_list_only(), _rebuild_filters()))
               for s in STATUS_LIST],
         ],
-        spacing=6, wrap=True,
+        spacing=6, wrap=False,
     )
 
     priority_filters = ft.Row(
@@ -1080,7 +1130,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                            lambda: (_refresh_task_list_only(), _rebuild_filters()))
               for p in PRIORITY_LIST],
         ],
-        spacing=6, wrap=True,
+        spacing=6, wrap=False,
     )
 
     search_tf = ft.TextField(
@@ -1096,26 +1146,35 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         ),
     )
 
-    filter_col = ft.Column(
+    sort_dd = ft.Dropdown(
+        label="เรียงโดย",
+        options=[ft.dropdown.Option(o) for o in SORT_OPTIONS],
+        value="สร้างล่าสุด",
+        border_color=BORDER, focused_border_color=ACCENT,
+        label_style=ft.TextStyle(color=TEXT_SEC),
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        width=160, text_size=12,
+        content_padding=ft.padding.symmetric(horizontal=8, vertical=2),
+        on_select=lambda e: (
+            sort_order.update({"value": e.control.value or "สร้างล่าสุด"}),
+            _refresh_task_list_only(),
+        ),
+    )
+
+    filter_col = ft.Row(
         controls=[
-            ft.Row(
-                controls=[
-                    ft.Text("Status:", size=12, color=TEXT_SEC, width=60),
-                    status_filters,
-                ],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            ft.Row(
-                controls=[
-                    ft.Text("Priority:", size=12, color=TEXT_SEC, width=60),
-                    priority_filters,
-                ],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
+            ft.Text("Status:", size=12, color=TEXT_SEC),
+            status_filters,
+            ft.Container(width=1, height=24, bgcolor=BORDER),
+            ft.Text("Priority:", size=12, color=TEXT_SEC),
+            priority_filters,
+            ft.Container(width=1, height=24, bgcolor=BORDER),
+            ft.Text("เรียง:", size=12, color=TEXT_SEC),
+            sort_dd,
         ],
-        spacing=6,
+        spacing=8,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        scroll=ft.ScrollMode.AUTO,
     )
 
     filter_container = ft.Ref[ft.Column]()
@@ -1140,12 +1199,12 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         priority_filters.controls = new_priority_chips
         try:
             status_filters.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
         try:
             priority_filters.update()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("load failed: %s", e, exc_info=True)
 
     # ══════════════════════════════════════════════════════════════
     #  TOP BAR
@@ -1165,7 +1224,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 controls=[
                     ft.Container(width=240, content=search_tf),
                     ft.Button(
-                        "+ สร้างงาน",
+                        "สร้างงาน",
                         icon=ft.Icons.ADD,
                         bgcolor=ACCENT, color="#FFFFFF",
                         style=ft.ButtonStyle(

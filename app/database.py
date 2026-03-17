@@ -48,3 +48,18 @@ def init_db() -> None:
     # Import models so SQLAlchemy registers them before create_all
     from app.models import user, team, task, history, diary  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    # Add is_deleted columns to existing databases that predate these migrations
+    from sqlalchemy import text
+    _migrations = [
+        "ALTER TABLE tasks    ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE subtasks ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE users    ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE teams    ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0",
+    ]
+    for _sql in _migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(_sql))
+                conn.commit()
+        except Exception:
+            pass  # Column already exists — safe to ignore

@@ -3,7 +3,7 @@
 > **Project:** Team Task Management Desktop Application  
 > **Platform:** Windows Desktop (Python Flet)  
 > **Version:** 1.0.0  
-> **Last Updated:** February 2026
+> **Last Updated:** March 2026
 
 ---
 
@@ -94,6 +94,8 @@ Desktop application สำหรับจัดการงานและมอ
 |---|---|
 | `venv` | Virtual Environment แยก dependencies |
 | `PyInstaller` | Build เป็น .exe สำหรับ Windows |
+| `pytest >= 9.0.0` | Unit test runner |
+| `pytest-cov >= 7.0.0` | Code coverage report |
 
 ---
 
@@ -128,8 +130,18 @@ task_manager/
 │   │   ├── summary_view.py
 │   │   └── history_view.py
 │   └── utils/               # Helpers, exporters
+│       ├── theme.py
+│       ├── date_helpers.py
+│       ├── logger.py        # Phase 12: Centralized logging
+│       ├── exceptions.py    # Phase 12: Custom exception hierarchy
+│       └── ui_helpers.py    # Phase 12: show_snack, confirm_dialog, show_loading
+├── tests/                   # Phase 12: Unit test suite (27 tests)
+│   ├── conftest.py
+│   ├── test_task_service.py
+│   ├── test_diary_service.py
+│   └── test_exceptions.py
 ├── assets/
-├── data/                    # SQLite file + Word export
+├── data/                    # SQLite file + Word export + taskflow.log
 └── requirements.txt
 ```
 
@@ -191,6 +203,7 @@ flet pack main.py --name "Task Manager"
 | **Phase 9** | Environment Recovery & UI Color Fix | ✅ Done |
 | **Phase 10** | Blue-White Theme | ✅ Done |
 | **Phase 11** | JobDiary Integration + Export PDF/Excel Blue-White Theme + Thai Font Fix | ✅ Done |
-| **Phase 12** | เลือกไฟล์ Database จากไดร์ฟกลาง (Shared SQLite + WAL + retry) | 🔜 Planned |
-| **Phase 13** | ระบบล็อกอิน (Admin สร้างบัญชี / Member login) | 🔜 Planned |
-| **Phase 14** | พิจารณา Web App Migration (Flet Web / FastAPI + React) | 🔜 Planned |
+| **Phase 12** | Code Quality & Architecture Hardening (BaseRepo, Exceptions, Logging, UI Helpers, Soft Delete, Tests) | ✅ Done |
+| **Phase 13** | เลือกไฟล์ Database จากไดร์ฟกลาง (Shared SQLite + WAL + retry) | 🔜 Planned |
+| **Phase 14** | ระบบล็อกอิน (Admin สร้างบัญชี / Member login) | 🔜 Planned |
+| **Phase 15** | พิจารณา Web App Migration (Flet Web / FastAPI + React) | 🔜 Planned |

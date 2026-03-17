@@ -47,6 +47,7 @@ class Task(Base):
 
     created_at     = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_deleted     = Column(Boolean, default=False, nullable=False, server_default="0")
 
     # Relationships
     team        = relationship("Team", back_populates="tasks")
@@ -70,6 +71,7 @@ class SubTask(Base):
     task_id    = Column(Integer, ForeignKey("tasks.id"), nullable=False)
     title      = Column(String(200), nullable=False)
     is_done    = Column(Boolean, default=False, nullable=False)
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships

@@ -322,6 +322,60 @@
 
 ---
 
+---
+
+## Phase 12 — Code Quality & Architecture Hardening ✅ (16 มี.ค. 2569)
+
+### Session: 16 มีนาคม 2569
+
+#### Architecture — Abstract Base Repository
+- **ไฟล์:** `app/repositories/base.py` (ใหม่)
+- สร้าง `BaseRepository(ABC, Generic[T])` กำหนด interface กลาง: `get_by_id`, `get_all`, `delete`
+- Repositories ทุกตัว (`task_repo`, `team_repo`, `user_repo`, `diary_repo`) inherit ทำให้มั่นใจว่าครบ interface
+
+#### Architecture — Custom Exception Hierarchy
+- **ไฟล์:** `app/utils/exceptions.py` (ใหม่)
+- `TaskFlowError` (base) → `NotFoundError`, `DuplicateNameError`, `CircularDependencyError`, `SelfDependencyError`, `ValidationError`
+- แทนที่ bare `ValueError` ทั้งหมดใน `task_service.py` และ `team_service.py`
+- Handler ใน views จับ typed exception แทน generic Exception
+
+#### Feature — Centralized Logging
+- **ไฟล์:** `app/utils/logger.py` (ใหม่)
+- Rotating file handler: `data/taskflow.log` (1 MB × 3 ไฟล์), WARNING → console, DEBUG → file
+- `get_logger(name)` สร้าง child logger ภายใต้ `taskflow.` namespace
+- Views และ Services ทุกตัวใช้ `logger.error/warning/debug()` แทน `print()` และ bare `except: pass`
+
+#### Feature — UI Helper Utilities
+- **ไฟล์:** `app/utils/ui_helpers.py` (ใหม่)
+- `show_snack(page, message, error=False, duration=3000)` — SnackBar สำหรับทุก view
+- `confirm_dialog(page, title, message, on_confirm, ...)` — AlertDialog สำหรับ destructive actions
+- `show_loading(container, visible, page)` — แสดง/ซ่อน loading indicator
+- Views ทุกตัว (`task_view`, `team_view`, `calendar_view`, `history_view`, `diary_view`) ใช้ `show_snack()` แทน inline SnackBar
+
+#### Feature — Soft Delete สำหรับ Task
+- **Model:** เพิ่ม `is_deleted = Column(Boolean, default=False)` ใน `Task`
+- **Migration:** `init_db()` รัน `ALTER TABLE tasks ADD COLUMN is_deleted` (try/except สำหรับ DB เก่า)
+- **Repository:** `task_repo.delete()` เปลี่ยนเป็น soft delete (set flag), เพิ่ม `delete_permanent()` สำหรับลบจริง
+- **Queries:** `get_by_id`, `get_all`, `get_overdue`, `get_by_team`, `get_by_assignee`, `get_by_status` filter `is_deleted == False` ทั้งหมด
+- **Service:** เพิ่ม `restore_task(task_id)` ใน `TaskService`
+
+#### Feature — Interactive Dashboard
+- **ไฟล์:** `app/views/main_layout.py` — `build_dashboard_view(db, navigate_fn=None)`
+- Stat cards ทุกใบคลิกได้ → navigate ไปหน้า "งาน" (`navigate_fn("task")`)
+- ส่ง `navigate_fn=navigate` จาก `get_view("dashboard")`
+
+#### Testing — Unit Test Suite (27 tests)
+- **ไฟล์:** `tests/conftest.py` (ใหม่) — `db` fixture, in-memory SQLite per test function
+- **ไฟล์:** `tests/test_task_service.py` (ใหม่) — 20 tests ครอบคลุม create/read/update/delete/dependency validation/dashboard stats
+- **ไฟล์:** `tests/test_diary_service.py` (ใหม่) — 7 tests ครอบคลุม CRUD + grouped
+- **ไฟล์:** `tests/test_exceptions.py` (ใหม่) — 5 tests ตรวจสอบ exception hierarchy
+- **ผลลัพธ์:** 27/27 passed ใน 0.41s (`pytest tests/ -v`)
+
+#### Bug Fix — Test Ordering (Timing Race)
+- `diary_repo.get_all()` เพิ่ม tiebreaker `order_by(created_at DESC, id DESC)` แก้ test fluke เมื่อ 2 entries ถูกสร้างใน millisecond เดียวกัน
+
+---
+
 ### สิ่งที่ต้องทำเพิ่มเติม (Planned)
 
 | รายการ | รายละเอียด |

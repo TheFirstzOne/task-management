@@ -10,6 +10,12 @@ from app.models.task import Task, TaskStatus, TaskPriority
 from app.models.history import WorkHistory
 from app.repositories.task_repo import TaskRepository
 from app.repositories.user_repo import UserRepository
+from app.utils.exceptions import (
+    NotFoundError, CircularDependencyError, SelfDependencyError
+)
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class TaskService:
@@ -37,18 +43,18 @@ class TaskService:
     # ── Dependency validation ──────────────────────────────────────
     def _validate_dependency(self, task_id: Optional[int],
                              depends_on_id: Optional[int]) -> None:
-        """Raise ValueError if dependency is invalid (self-ref or circular)."""
+        """Raise TaskFlowError if dependency is invalid (self-ref or circular)."""
         if depends_on_id is None:
             return
         target = self.task_repo.get_by_id(depends_on_id)
         if not target:
-            raise ValueError("ไม่พบงานที่อ้างอิง")
+            raise NotFoundError("Task", depends_on_id)
         if task_id is not None and task_id == depends_on_id:
-            raise ValueError("ไม่สามารถอ้างอิงตัวเอง")
+            raise SelfDependencyError(task_id)
         if task_id is not None:
             chain = self.task_repo.get_dependency_chain(depends_on_id)
             if task_id in chain:
-                raise ValueError("เกิดการอ้างอิงแบบวงกลม (circular dependency)")
+                raise CircularDependencyError(task_id, depends_on_id)
 
     def check_dependency_warning(self, task_id: int) -> Optional[str]:
         """Return warning string if dependency is not Done, else None."""
@@ -99,7 +105,7 @@ class TaskService:
     def get_task(self, task_id: int) -> Task:
         task = self.task_repo.get_by_id(task_id)
         if not task:
-            raise ValueError(f"ไม่พบงาน id={task_id}")
+            raise NotFoundError("Task", task_id)
         return task
 
     def get_all_tasks(self) -> List[Task]:
@@ -161,7 +167,18 @@ class TaskService:
     # ── Delete ────────────────────────────────────────────────────
     def delete_task(self, task_id: int) -> None:
         if not self.task_repo.delete(task_id):
-            raise ValueError(f"ไม่พบงาน id={task_id}")
+            raise NotFoundError("Task", task_id)
+
+    def restore_task(self, task_id: int) -> Task:
+        """Restore a soft-deleted task."""
+        task = self.db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise NotFoundError("Task", task_id)
+        task.is_deleted = False
+        self.db.commit()
+        self.db.refresh(task)
+        self._log(task_id, "restored", detail="กู้คืนงานที่ถูกลบ")
+        return task
 
     # ── SubTasks ──────────────────────────────────────────────────
     def add_subtask(self, task_id: int, title: str):
