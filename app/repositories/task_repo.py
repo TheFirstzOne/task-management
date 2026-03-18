@@ -2,7 +2,7 @@
 TaskRepository — CRUD operations for Task, SubTask, TaskComment
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.models.task import Task, SubTask, TaskComment, TaskStatus, TaskPriority
@@ -76,7 +76,7 @@ class TaskRepository(BaseRepository[Task]):
         return self.db.query(Task).filter(Task.status == status, Task.is_deleted == False).all()  # noqa: E712
 
     def get_overdue(self) -> List[Task]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         return (
             self.db.query(Task)
             .filter(Task.due_date < now, Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
@@ -130,6 +130,29 @@ class TaskRepository(BaseRepository[Task]):
         self.db.commit()
         return True
 
+    def get_any_by_id(self, task_id: int) -> Optional[Task]:
+        """Get task regardless of is_deleted flag (needed for restore)."""
+        return self.db.query(Task).filter(Task.id == task_id).first()
+
+    def get_deleted(self) -> List[Task]:
+        """Return all soft-deleted tasks ordered by updated_at desc."""
+        return (
+            self.db.query(Task)
+            .filter(Task.is_deleted == True)  # noqa: E712
+            .order_by(Task.updated_at.desc())
+            .all()
+        )
+
+    def restore(self, task_id: int) -> Optional[Task]:
+        """Restore a soft-deleted task. Returns None if not found."""
+        task = self.get_any_by_id(task_id)
+        if not task:
+            return None
+        task.is_deleted = False
+        self.db.commit()
+        self.db.refresh(task)
+        return task
+
     def delete_permanent(self, task_id: int) -> bool:
         """Hard delete — permanently removes from database."""
         task = self.get_by_id(task_id)
@@ -138,6 +161,36 @@ class TaskRepository(BaseRepository[Task]):
         self.db.delete(task)
         self.db.commit()
         return True
+
+    def unassign_user(self, user_id: int) -> int:
+        """Unassign active tasks from user. Returns count of tasks updated."""
+        from app.models.task import TaskStatus
+        tasks = (
+            self.db.query(Task)
+            .filter(
+                Task.assignee_id == user_id,
+                Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+                Task.is_deleted == False,  # noqa: E712
+            )
+            .all()
+        )
+        for task in tasks:
+            task.assignee_id = None
+        self.db.commit()
+        return len(tasks)
+
+    def count_active_by_assignee(self, user_id: int) -> int:
+        """Return count of active (non-done, non-cancelled) tasks for a user."""
+        from app.models.task import TaskStatus
+        return (
+            self.db.query(Task)
+            .filter(
+                Task.assignee_id == user_id,
+                Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+                Task.is_deleted == False,  # noqa: E712
+            )
+            .count()
+        )
 
     # ── SubTask ───────────────────────────────────────────────────
     def add_subtask(self, task_id: int, title: str) -> SubTask:

@@ -8,6 +8,7 @@ import flet as ft
 from app.database import SessionLocal
 import app.utils.theme as theme
 from app.utils.ui_helpers import safe_update
+from app.utils import shortcut_registry
 
 
 NAV_ITEMS = [
@@ -23,27 +24,47 @@ NAV_ITEMS = [
 
 def build_main_layout(page: ft.Page) -> ft.Control:
     """Build and return the complete app shell."""
-    db = SessionLocal()
 
     # ── State ─────────────────────────────────────────────────────
     active_key        = {"value": "dashboard"}
     nav_containers:  dict = {}
     nav_label_refs:  dict = {}   # key → ft.Text label control
     task_badge_info: dict = {"ctrl": None}
+    near_badge_info: dict = {"ctrl": None}
     sidebar_collapsed = {"value": False}
+    _active_db:      dict = {"value": None}   # track current session for cleanup
     content_area = ft.Column(expand=True, spacing=0)
+
+    # ── Keyboard shortcut dispatcher ──────────────────────────────
+    def _on_keyboard(e: ft.KeyboardEvent):
+        shortcut_registry.dispatch(e.key, e.ctrl, e.shift, e.alt)
+
+    page.on_keyboard_event = _on_keyboard
 
     # ── View factory ──────────────────────────────────────────────
     def get_view(key: str) -> ft.Control:
-        from app.views.team_view     import build_team_view
-        from app.views.task_view     import build_task_view
-        from app.views.calendar_view import build_calendar_view
-        from app.views.diary_view    import build_diary_view
-        from app.views.summary_view  import build_summary_view
-        from app.views.history_view  import build_history_view
+        from app.views.dashboard_view import build_dashboard_view as _build_dash
+        from app.views.team_view      import build_team_view
+        from app.views.task_view      import build_task_view
+        from app.views.calendar_view  import build_calendar_view
+        from app.views.diary_view     import build_diary_view
+        from app.views.summary_view   import build_summary_view
+        from app.views.history_view   import build_history_view
 
+        # Clear per-view shortcuts before building new view
+        shortcut_registry.clear()
+
+        # Close previous session before creating a new one (prevent session leak)
+        if _active_db["value"] is not None:
+            try:
+                _active_db["value"].close()
+            except Exception:
+                pass
+
+        db = SessionLocal()   # fresh session per navigation — avoids identity map bloat
+        _active_db["value"] = db
         factories = {
-            "dashboard": lambda: build_dashboard_view(db, navigate_fn=navigate),
+            "dashboard": lambda: _build_dash(db, navigate_fn=navigate),
             "team":      lambda: build_team_view(db, page),
             "task":      lambda: build_task_view(db, page),
             "calendar":  lambda: build_calendar_view(db, page),
@@ -51,22 +72,38 @@ def build_main_layout(page: ft.Page) -> ft.Control:
             "summary":   lambda: build_summary_view(db, page),
             "history":   lambda: build_history_view(db, page),
         }
-        return factories.get(key, lambda: build_dashboard_view(db, navigate_fn=navigate))()
+        return factories.get(key, lambda: _build_dash(db, navigate_fn=navigate))()
 
-    # ── Overdue badge refresh ─────────────────────────────────────
+    # ── Overdue + near-due badge refresh ─────────────────────────
     def _refresh_task_badge() -> None:
-        ctrl = task_badge_info.get("ctrl")
-        if not ctrl:
+        ctrl      = task_badge_info.get("ctrl")
+        near_ctrl = near_badge_info.get("ctrl")
+        if not ctrl and not near_ctrl:
             return
         try:
             from app.services.task_service import TaskService
-            count = TaskService(db).get_dashboard_stats().get("overdue", 0)
-            if count > 0 and not sidebar_collapsed["value"]:
-                ctrl.content.value = str(count) if count < 100 else "99+"
-                ctrl.visible = True
-            else:
-                ctrl.visible = False
-            safe_update(ctrl)
+            badge_db = SessionLocal()
+            try:
+                svc   = TaskService(badge_db)
+                count = svc.get_dashboard_stats().get("overdue", 0)
+                near  = svc.get_near_due_count(days_ahead=3)
+            finally:
+                badge_db.close()
+            expanded = not sidebar_collapsed["value"]
+            if ctrl:
+                if count > 0 and expanded:
+                    ctrl.content.value = str(count) if count < 100 else "99+"
+                    ctrl.visible = True
+                else:
+                    ctrl.visible = False
+                safe_update(ctrl)
+            if near_ctrl:
+                if near > 0 and expanded:
+                    near_ctrl.content.value = str(near) if near < 100 else "99+"
+                    near_ctrl.visible = True
+                else:
+                    near_ctrl.visible = False
+                safe_update(near_ctrl)
         except Exception:
             pass
 
@@ -120,7 +157,7 @@ def build_main_layout(page: ft.Page) -> ft.Control:
             label_ctrl,
         ]
 
-        # Overdue badge — visible only on the "task" nav item
+        # Overdue + near-due badges — visible only on the "task" nav item
         if key == "task":
             badge = ft.Container(
                 width=20, height=20, border_radius=10,
@@ -132,6 +169,16 @@ def build_main_layout(page: ft.Page) -> ft.Control:
             )
             task_badge_info["ctrl"] = badge
             row_controls.append(badge)
+            near_badge = ft.Container(
+                width=20, height=20, border_radius=10,
+                bgcolor="#FF9800",
+                alignment=ft.alignment.Alignment(0, 0),
+                visible=False,
+                content=ft.Text("0", size=9, color="#FFFFFF",
+                                weight=ft.FontWeight.BOLD),
+            )
+            near_badge_info["ctrl"] = near_badge
+            row_controls.append(near_badge)
 
         c = ft.Container(
             height=42,
@@ -275,57 +322,3 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         expand=True,
     )
 
-
-# ── Dashboard view (inline) ───────────────────────────────────────────────────
-def build_dashboard_view(db, navigate_fn=None) -> ft.Control:
-    from app.services.task_service import TaskService
-    svc   = TaskService(db)
-    stats = svc.get_dashboard_stats()
-
-    def stat_card(label: str, value: int, color: str) -> ft.Container:
-        return ft.Container(
-            width=160,
-            height=90,
-            bgcolor=theme.BG_CARD,
-            border_radius=12,
-            border=ft.border.all(1, theme.BORDER),
-            padding=16,
-            ink=True,
-            on_click=lambda e, k="task": navigate_fn(k) if navigate_fn else None,
-            content=ft.Column(
-                controls=[
-                    ft.Text(str(value), size=32, weight=ft.FontWeight.BOLD,
-                            color=color),
-                    ft.Text(label, size=13, color=theme.TEXT_SEC),
-                ],
-                spacing=2,
-            ),
-        )
-
-    cards = ft.Row(
-        controls=[
-            stat_card("งานทั้งหมด",  stats["total"],       theme.TEXT_PRI),
-            stat_card("กำลังทำ",     stats["in_progress"], theme.ACCENT2),
-            stat_card("เสร็จแล้ว",  stats["done"],        "#22C55E"),
-            stat_card("เกินกำหนด",  stats["overdue"],     "#EF4444"),
-            stat_card("ค้างอยู่",   stats["pending"],     "#F59E0B"),
-        ],
-        spacing=12,
-        wrap=True,
-    )
-
-    return ft.Container(
-        expand=True,
-        bgcolor=theme.BG_DARK,
-        padding=24,
-        content=ft.Column(
-            controls=[
-                ft.Text("Dashboard", size=24,
-                        weight=ft.FontWeight.BOLD, color=theme.TEXT_PRI),
-                ft.Text("ภาพรวมงานทั้งหมด", size=13, color=theme.TEXT_SEC),
-                ft.Divider(height=20, color=theme.BORDER),
-                cards,
-            ],
-            spacing=8,
-        ),
-    )

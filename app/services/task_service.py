@@ -2,8 +2,9 @@
 TaskService — Business logic for task management & history logging
 """
 
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Optional, TypedDict
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.task import Task, TaskStatus, TaskPriority
@@ -11,11 +12,19 @@ from app.models.history import WorkHistory
 from app.repositories.task_repo import TaskRepository
 from app.repositories.user_repo import UserRepository
 from app.utils.exceptions import (
-    NotFoundError, CircularDependencyError, SelfDependencyError
+    NotFoundError, CircularDependencyError, SelfDependencyError, ValidationError
 )
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class DashboardStats(TypedDict):
+    total: int
+    pending: int
+    in_progress: int
+    done: int
+    overdue: int
 
 
 class TaskService:
@@ -71,6 +80,25 @@ class TaskService:
     def get_dependent_tasks(self, task_id: int) -> List[Task]:
         return self.task_repo.get_dependent_tasks(task_id)
 
+    def get_tasks_for_depends_dropdown(
+        self, exclude_id: Optional[int] = None
+    ) -> List[Task]:
+        """Return non-cancelled tasks for dependency dropdown, excluding the task being edited.
+        Views should call this instead of filtering tasks inline."""
+        return [
+            t for t in self.task_repo.get_all()
+            if t.id != exclude_id and t.status != TaskStatus.CANCELLED
+        ]
+
+    # ── Input validation ──────────────────────────────────────────
+    def _validate_task_input(self, title: str,
+                              start_date: Optional[datetime],
+                              due_date: Optional[datetime]) -> None:
+        if not title or not title.strip():
+            raise ValidationError("ชื่องานต้องไม่ว่าง")
+        if start_date and due_date and start_date > due_date:
+            raise ValidationError("วันเริ่มต้องไม่อยู่หลังวันครบกำหนด")
+
     # ── Create ────────────────────────────────────────────────────
     def create_task(
         self,
@@ -85,6 +113,9 @@ class TaskService:
         created_by_id: Optional[int] = None,
         depends_on_id: Optional[int] = None,
     ) -> Task:
+        """Create a new task after validating input and dependency.
+        Raises ValidationError, SelfDependencyError, CircularDependencyError."""
+        self._validate_task_input(title, start_date, due_date)
         self._validate_dependency(None, depends_on_id)
         task = self.task_repo.create(
             title=title,
@@ -111,6 +142,18 @@ class TaskService:
     def get_all_tasks(self) -> List[Task]:
         return self.task_repo.get_all()
 
+    def get_task_or_none(self, task_id: int) -> Optional[Task]:
+        """Return task by id without raising — returns None if not found."""
+        return self.task_repo.get_by_id(task_id)
+
+    def get_deleted_tasks(self) -> List[Task]:
+        """Return all soft-deleted tasks."""
+        return self.task_repo.get_deleted()
+
+    def get_comments(self, task_id: int):
+        """Return comments for a task ordered by created_at asc."""
+        return self.task_repo.get_comments(task_id)
+
     def get_tasks_by_team(self, team_id: int) -> List[Task]:
         return self.task_repo.get_by_team(team_id)
 
@@ -120,9 +163,49 @@ class TaskService:
     def get_overdue_tasks(self) -> List[Task]:
         return self.task_repo.get_overdue()
 
+    def get_near_due_tasks(self, days_ahead: int = 3) -> List[Task]:
+        """Return active tasks due within the next `days_ahead` days (not yet overdue)."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        cutoff = now + timedelta(days=days_ahead)
+        return (
+            self.db.query(Task)
+            .filter(
+                Task.is_deleted == False,  # noqa: E712
+                Task.due_date >= now,
+                Task.due_date <= cutoff,
+                Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+            )
+            .order_by(Task.due_date.asc())
+            .all()
+        )
+
+    def get_near_due_count(self, days_ahead: int = 3) -> int:
+        """Return count of active tasks due within `days_ahead` days."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        cutoff = now + timedelta(days=days_ahead)
+        return (
+            self.db.query(func.count(Task.id))
+            .filter(
+                Task.is_deleted == False,  # noqa: E712
+                Task.due_date >= now,
+                Task.due_date <= cutoff,
+                Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+            )
+            .scalar() or 0
+        )
+
     # ── Update ────────────────────────────────────────────────────
     def update_task(self, task_id: int, actor_id: Optional[int] = None,
                     **kwargs) -> Task:
+        """Update task fields; validates changed title/dates and dependency.
+        Logs a history entry for each changed field."""
+        # Validate input fields if being changed
+        if "title" in kwargs or "start_date" in kwargs or "due_date" in kwargs:
+            task = self.get_task(task_id)
+            title      = kwargs.get("title",      task.title)
+            start_date = kwargs.get("start_date", task.start_date)
+            due_date   = kwargs.get("due_date",   task.due_date)
+            self._validate_task_input(title, start_date, due_date)
         # Validate dependency if being changed
         if "depends_on_id" in kwargs:
             self._validate_dependency(task_id, kwargs["depends_on_id"])
@@ -133,8 +216,10 @@ class TaskService:
         updated = self.task_repo.update(task_id, **kwargs)
         for field, (old, new) in changed.items():
             if field == "depends_on_id":
-                old_name = self.task_repo.get_by_id(old).title if old else "ไม่มี"
-                new_name = self.task_repo.get_by_id(new).title if new else "ไม่มี"
+                old_t = self.task_repo.get_by_id(old) if old else None
+                new_t = self.task_repo.get_by_id(new) if new else None
+                old_name = old_t.title if old_t else (f"#{old}" if old else "ไม่มี")
+                new_name = new_t.title if new_t else (f"#{new}" if new else "ไม่มี")
                 self._log(task_id, "dependency_changed",
                           detail=f"เปลี่ยนงานที่ต้องทำก่อน: {old_name} → {new_name}",
                           old_value=str(old), new_value=str(new), actor_id=actor_id)
@@ -145,16 +230,19 @@ class TaskService:
 
     def change_status(self, task_id: int, new_status: TaskStatus,
                       actor_id: Optional[int] = None) -> Task:
+        """Change task status and log the transition to history."""
         task = self.get_task(task_id)
         old_status = task.status
         updated = self.task_repo.change_status(task_id, new_status)
         self._log(task_id, "status_changed",
-                  detail=f"เปลี่ยนสถานะ: {old_status} → {new_status}",
-                  old_value=old_status, new_value=new_status, actor_id=actor_id)
+                  detail=f"เปลี่ยนสถานะ: {old_status.value} → {new_status.value}",
+                  old_value=old_status.value, new_value=new_status.value,
+                  actor_id=actor_id)
         return updated
 
     def assign_task(self, task_id: int, assignee_id: Optional[int],
                     actor_id: Optional[int] = None) -> Task:
+        """Assign (or unassign) a task to a user; logs to history."""
         task = self.get_task(task_id)
         old_assignee = task.assignee_id
         updated = self.task_repo.update(task_id, assignee_id=assignee_id)
@@ -171,12 +259,9 @@ class TaskService:
 
     def restore_task(self, task_id: int) -> Task:
         """Restore a soft-deleted task."""
-        task = self.db.query(Task).filter(Task.id == task_id).first()
+        task = self.task_repo.restore(task_id)
         if not task:
             raise NotFoundError("Task", task_id)
-        task.is_deleted = False
-        self.db.commit()
-        self.db.refresh(task)
         self._log(task_id, "restored", detail="กู้คืนงานที่ถูกลบ")
         return task
 
@@ -198,18 +283,30 @@ class TaskService:
         return comment
 
     # ── Summary / Dashboard ───────────────────────────────────────
-    def get_dashboard_stats(self) -> Dict[str, int]:
-        all_tasks = self.task_repo.get_all()
-        done      = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
-        cancelled = sum(1 for t in all_tasks if t.status == TaskStatus.CANCELLED)
-        overdue   = len(self.task_repo.get_overdue())
-        pending   = sum(1 for t in all_tasks if t.status == TaskStatus.PENDING)
-        in_prog   = sum(1 for t in all_tasks if t.status == TaskStatus.IN_PROGRESS)
+    def get_dashboard_stats(self) -> DashboardStats:
+        """Return task counts using SQL COUNT queries — avoids loading all rows."""
+        base = (
+            self.db.query(func.count(Task.id))
+            .filter(Task.is_deleted == False)
+        )
+        def _count_status(status: TaskStatus) -> int:
+            return base.filter(Task.status == status).scalar() or 0
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        overdue = (
+            self.db.query(func.count(Task.id))
+            .filter(
+                Task.is_deleted == False,
+                Task.due_date < now,
+                Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+            )
+            .scalar() or 0
+        )
         return {
-            "total":       len(all_tasks),
-            "done":        done,
-            "cancelled":   cancelled,
+            "total":       base.scalar() or 0,
+            "done":        _count_status(TaskStatus.DONE),
+            "cancelled":   _count_status(TaskStatus.CANCELLED),
             "overdue":     overdue,
-            "pending":     pending,
-            "in_progress": in_prog,
+            "pending":     _count_status(TaskStatus.PENDING),
+            "in_progress": _count_status(TaskStatus.IN_PROGRESS),
         }

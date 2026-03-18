@@ -37,6 +37,8 @@ from app.utils.theme import (
     status_color, priority_color,
 )
 
+from app.utils.date_helpers import parse_date_field
+
 ALL_OPT = "ทั้งหมด"
 
 # ── Status display order ───────────────────────────────────────────────────
@@ -650,12 +652,74 @@ def build_summary_view(db: Session, page: ft.Page) -> ft.Control:
             ft.Column(controls=member_rows_ctrl, spacing=0),
         )
 
+        # ── C4: Time Tracking report ────────────────────────────
+        from app.services.time_tracking_service import TimeTrackingService
+        time_svc     = TimeTrackingService(db)
+        by_task      = time_svc.get_summary_by_task()
+        by_member    = time_svc.get_summary_by_member()
+
+        def _fmt_min(m: int) -> str:
+            if m < 60:
+                return f"{m} นาที"
+            h, r = divmod(m, 60)
+            return f"{h} ชม. {r} นาที" if r else f"{h} ชม."
+
+        # Time table header
+        def _time_header(*cols) -> ft.Row:
+            return ft.Row(
+                controls=[ft.Text(c, size=11, color=TEXT_SEC,
+                                  weight=ft.FontWeight.W_600,
+                                  expand=1 if i == 0 else 0,
+                                  width=None if i == 0 else 90)
+                           for i, c in enumerate(cols)],
+                spacing=0,
+            )
+
+        def _time_row(label, minutes) -> ft.Row:
+            return ft.Row(
+                controls=[
+                    ft.Text(label, size=12, color=TEXT_PRI, expand=True,
+                            no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
+                    ft.Text(_fmt_min(minutes), size=12, color=ACCENT, width=90),
+                ],
+                spacing=0,
+            )
+
+        task_time_rows  = [_time_header("งาน", "เวลารวม")] + (
+            [_time_row(r["title"][:40], r["total_minutes"]) for r in by_task[:10]]
+            or [ft.Text("ยังไม่มีข้อมูล", size=12, color=TEXT_SEC)]
+        )
+        member_time_rows = [_time_header("สมาชิก", "เวลารวม")] + (
+            [_time_row(r["name"], r["total_minutes"]) for r in by_member[:10]]
+            or [ft.Text("ยังไม่มีข้อมูล", size=12, color=TEXT_SEC)]
+        )
+
+        time_section = _section(
+            "สรุปเวลาทำงาน",
+            ft.Row(
+                controls=[
+                    ft.Container(
+                        expand=True,
+                        content=ft.Column(controls=task_time_rows, spacing=6),
+                    ),
+                    ft.Container(width=1, bgcolor=BORDER),
+                    ft.Container(
+                        expand=True,
+                        content=ft.Column(controls=member_time_rows, spacing=6),
+                    ),
+                ],
+                spacing=12,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+        )
+
         content_col.controls = [
             cards,
             ft.Row(controls=[status_section, prio_section],
                    spacing=16, expand=True),
             team_section,
             member_section,
+            time_section,
         ]
         try:
             content_col.update()
@@ -703,25 +767,9 @@ def build_summary_view(db: Session, page: ft.Page) -> ft.Control:
         on_blur=lambda e: _apply_dates(),
     )
 
-    def _parse_date_field(val: str) -> Optional[date]:
-        val = val.strip()
-        if not val:
-            return None
-        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
-            try:
-                return datetime.strptime(val, fmt).date()
-            except ValueError:
-                continue
-        # Try Buddhist Era → CE
-        try:
-            d, m, y_be = val.split("/")
-            return date(int(y_be) - 543, int(m), int(d))
-        except Exception:
-            return None
-
     def _apply_dates():
-        state["date_from"] = _parse_date_field(tf_date_from.value or "")
-        state["date_to"]   = _parse_date_field(tf_date_to.value or "")
+        state["date_from"] = parse_date_field(tf_date_from.value or "")
+        state["date_to"]   = parse_date_field(tf_date_to.value or "")
         _rebuild()
 
     def _on_filter(key: str, val):

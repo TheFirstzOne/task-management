@@ -58,8 +58,8 @@ def show_snack(
         )
         page.snack_bar.open = True
         page.update()
-    except Exception:
-        pass  # Never crash the app because of a notification
+    except Exception as e:
+        _log.warning("show_snack failed: %s", e)  # Never crash the app because of a notification
 
 
 def show_loading(container: ft.Column | ft.Stack, visible: bool, page: ft.Page) -> None:
@@ -78,6 +78,19 @@ def show_loading(container: ft.Column | ft.Stack, visible: bool, page: ft.Page) 
             page.update()
     except Exception:
         pass
+
+
+def safe_page_update(page: ft.Page) -> None:
+    """Safely call page.update() — logs warning on failure instead of crashing.
+
+    Usage:
+        from app.utils.ui_helpers import safe_page_update
+        safe_page_update(page)   # instead of try: page.update() except Exception: ...
+    """
+    try:
+        page.update()
+    except Exception as e:
+        _log.warning("safe_page_update failed: %s", e)
 
 
 def confirm_dialog(

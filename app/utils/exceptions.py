@@ -18,10 +18,10 @@ class TaskFlowError(Exception):
 
 class NotFoundError(TaskFlowError):
     """Raised when a requested entity does not exist in the database."""
-    def __init__(self, entity: str, id: int):
-        super().__init__(f"ไม่พบ {entity} (id={id})")
+    def __init__(self, entity: str, entity_id: int):
+        super().__init__(f"ไม่พบ {entity} (id={entity_id})")
         self.entity = entity
-        self.id = id
+        self.entity_id = entity_id
 
 
 class DuplicateNameError(TaskFlowError):
@@ -52,3 +52,6 @@ class SelfDependencyError(TaskFlowError):
 
 class ValidationError(TaskFlowError):
     """Raised when input data fails business-rule validation."""
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message

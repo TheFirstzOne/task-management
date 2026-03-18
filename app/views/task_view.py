@@ -26,15 +26,23 @@ from app.utils.theme import (
     COLOR_URGENT, COLOR_DONE,
     status_color, priority_color,
 )
-from app.utils.date_helpers import format_date, is_overdue, days_until
+from app.utils.date_helpers import format_date, is_overdue, days_until, parse_date_input
+from app.utils.exceptions import (
+    ValidationError, NotFoundError,
+    CircularDependencyError, SelfDependencyError,
+)
 from app.utils.logger import get_logger
-from app.utils.ui_helpers import show_snack, safe_update
+from app.utils.ui_helpers import show_snack, safe_update, safe_page_update
+from app.utils import shortcut_registry
 logger = get_logger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-STATUS_LIST   = [s.value for s in TaskStatus]
-PRIORITY_LIST = [p.value for p in TaskPriority]
-COLOR_NEAR    = "#FF9800"   # due within 2 days
+STATUS_LIST      = [s.value for s in TaskStatus]
+PRIORITY_LIST    = [p.value for p in TaskPriority]
+COLOR_NEAR       = "#FF9800"   # due within 2 days
+ALL_FILTER       = "ทั้งหมด"  # filter chip "show all" value
+NO_SELECTION     = "none"      # dropdown "not selected" key
+DEFAULT_PRIORITY = "Medium"    # default task priority on new dialog
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -84,8 +92,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
 
     # ── State ──────────────────────────────────────────────────────
     selected_task_id: dict = {"value": None}
-    filter_status:    dict = {"value": "ทั้งหมด"}
-    filter_priority:  dict = {"value": "ทั้งหมด"}
+    filter_status:    dict = {"value": ALL_FILTER}
+    filter_priority:  dict = {"value": ALL_FILTER}
     search_query:     dict = {"value": ""}
     sort_order:       dict = {"value": "สร้างล่าสุด"}
 
@@ -94,6 +102,13 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
 
     # ── Layout refs ────────────────────────────────────────────────
     task_list_col  = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
+    _filter_loading = ft.Row(
+        controls=[
+            ft.ProgressRing(width=16, height=16, stroke_width=2, color=ACCENT),
+            ft.Text("กำลังกรอง...", size=12, color=TEXT_SEC),
+        ],
+        spacing=6, visible=False,
+    )
     detail_panel   = ft.Container(
         visible=False,
         width=340,
@@ -120,7 +135,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     dd_priority = ft.Dropdown(
         label="Priority",
         options=[ft.dropdown.Option(p) for p in PRIORITY_LIST],
-        value="Medium",
+        value=DEFAULT_PRIORITY,
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
         color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
@@ -156,19 +171,13 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         if start_date_picker.value:
             local = _fix_picker_date(start_date_picker.value)
             tf_start_date.value = local.strftime("%d/%m/%Y")
-            try:
-                tf_start_date.update()
-            except Exception as e:
-                logger.warning("load failed: %s", e, exc_info=True)
+            safe_update(tf_start_date)
 
     def _on_due_date_picked(e):
         if due_date_picker.value:
             local = _fix_picker_date(due_date_picker.value)
             tf_due_date.value = local.strftime("%d/%m/%Y")
-            try:
-                tf_due_date.update()
-            except Exception as e:
-                logger.warning("load failed: %s", e, exc_info=True)
+            safe_update(tf_due_date)
 
     def _open_date_picker(picker):
         """Open DatePicker using page.show_dialog (recommended for Flet 0.82)."""
@@ -194,8 +203,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     # Team dropdown (populated when dialog opens)
     dd_team_dlg = ft.Dropdown(
         label="ทีม",
-        options=[ft.dropdown.Option(key="none", text="— ไม่ระบุ —")],
-        value="none",
+        options=[ft.dropdown.Option(key=NO_SELECTION, text="— ไม่ระบุ —")],
+        value=NO_SELECTION,
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
         color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
@@ -204,8 +213,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     # Assignee dropdown (populated when dialog opens)
     dd_assignee = ft.Dropdown(
         label="มอบหมายให้",
-        options=[ft.dropdown.Option(key="none", text="— ไม่ระบุ —")],
-        value="none",
+        options=[ft.dropdown.Option(key=NO_SELECTION, text="— ไม่ระบุ —")],
+        value=NO_SELECTION,
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
         color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
@@ -214,8 +223,8 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     # Dependency dropdown (populated when dialog opens)
     dd_depends_on = ft.Dropdown(
         label="งานที่ต้องทำก่อน",
-        options=[ft.dropdown.Option(key="none", text="— ไม่มี —")],
-        value="none",
+        options=[ft.dropdown.Option(key=NO_SELECTION, text="— ไม่มี —")],
+        value=NO_SELECTION,
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
         color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
@@ -225,42 +234,27 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     task_dlg_err   = ft.Text("", color=COLOR_URGENT, size=12)
     _editing_task_id: dict = {"value": None}
 
-    def _parse_date(s: str) -> Optional[datetime]:
-        s = (s or "").strip()
-        if not s:
-            return None
-        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
-            try:
-                return datetime.strptime(s, fmt)
-            except ValueError:
-                continue
-        raise ValueError(f"รูปแบบวันที่ไม่ถูกต้อง: {s!r}  (ใช้ dd/mm/yyyy)")
-
     def _populate_team_dropdown():
         teams = team_svc.get_all_teams()
-        dd_team_dlg.options = [ft.dropdown.Option(key="none", text="— ไม่ระบุ —")] + [
+        dd_team_dlg.options = [ft.dropdown.Option(key=NO_SELECTION, text="— ไม่ระบุ —")] + [
             ft.dropdown.Option(key=str(t.id), text=t.name) for t in teams
         ]
 
-    def _populate_assignee_dropdown(team_key: str = "none"):
-        if team_key and team_key != "none":
+    def _populate_assignee_dropdown(team_key: str = NO_SELECTION):
+        team_id = None
+        if team_key and team_key != NO_SELECTION:
             try:
-                tid = int(team_key)
-                users = team_svc.user_repo.get_by_team(tid, active_only=True)
+                team_id = int(team_key)
             except (ValueError, TypeError):
-                users = team_svc.user_repo.get_all(active_only=True)
-        else:
-            users = team_svc.user_repo.get_all(active_only=True)
-        dd_assignee.options = [ft.dropdown.Option(key="none", text="— ไม่ระบุ —")] + [
+                pass
+        users = team_svc.get_members_for_dropdown(team_id)
+        dd_assignee.options = [ft.dropdown.Option(key=NO_SELECTION, text="— ไม่ระบุ —")] + [
             ft.dropdown.Option(key=str(u.id), text=u.name) for u in users
         ]
 
     def _populate_depends_on_dropdown(exclude_task_id: Optional[int] = None):
-        tasks = task_svc.get_all_tasks()
-        tasks = [t for t in tasks
-                 if t.id != exclude_task_id
-                 and t.status != TaskStatus.CANCELLED]
-        dd_depends_on.options = [ft.dropdown.Option(key="none", text="— ไม่มี —")] + [
+        tasks = task_svc.get_tasks_for_depends_dropdown(exclude_id=exclude_task_id)
+        dd_depends_on.options = [ft.dropdown.Option(key=NO_SELECTION, text="— ไม่มี —")] + [
             ft.dropdown.Option(key=str(t.id), text=f"{t.title[:40]} ({t.status.value})")
             for t in tasks
         ]
@@ -269,57 +263,40 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         task_dlg.open = False
         tf_title.value = tf_desc.value = tf_tags.value = ""
         tf_start_date.value = tf_due_date.value = ""
-        dd_priority.value = "Medium"
-        dd_team_dlg.value = "none"
-        dd_assignee.value = "none"
-        dd_depends_on.value = "none"
+        dd_priority.value = DEFAULT_PRIORITY
+        dd_team_dlg.value = NO_SELECTION
+        dd_assignee.value = NO_SELECTION
+        dd_depends_on.value = NO_SELECTION
         task_dlg_err.value = ""
         _editing_task_id["value"] = None
-        try:
-            page.update()
-        except Exception as e:
-            logger.warning("load failed: %s", e, exc_info=True)
+        safe_page_update(page)
 
     def _save_task(e):
         title = (tf_title.value or "").strip()
         if not title:
             task_dlg_err.value = "กรุณาใส่ชื่องาน"
-            try:
-                page.update()
-            except Exception as e:
-                logger.warning("load failed: %s", e, exc_info=True)
+            safe_page_update(page)
             return
         try:
-            start = _parse_date(tf_start_date.value)
-            due   = _parse_date(tf_due_date.value)
+            start = parse_date_input(tf_start_date.value)
+            due   = parse_date_input(tf_due_date.value)
         except ValueError as ex:
             task_dlg_err.value = str(ex)
-            try:
-                page.update()
-            except Exception as e:
-                logger.warning("load failed: %s", e, exc_info=True)
+            safe_page_update(page)
             return
 
-        team_id = None
-        if dd_team_dlg.value and dd_team_dlg.value != "none":
-            try:
-                team_id = int(dd_team_dlg.value)
-            except (ValueError, TypeError):
-                pass
+        def _dd_int(dropdown: ft.Dropdown) -> Optional[int]:
+            v = dropdown.value
+            if v and v != NO_SELECTION:
+                try:
+                    return int(v)
+                except (ValueError, TypeError):
+                    pass
+            return None
 
-        assignee_id = None
-        if dd_assignee.value and dd_assignee.value != "none":
-            try:
-                assignee_id = int(dd_assignee.value)
-            except (ValueError, TypeError):
-                pass
-
-        depends_on_id = None
-        if dd_depends_on.value and dd_depends_on.value != "none":
-            try:
-                depends_on_id = int(dd_depends_on.value)
-            except (ValueError, TypeError):
-                pass
+        team_id       = _dd_int(dd_team_dlg)
+        assignee_id   = _dd_int(dd_assignee)
+        depends_on_id = _dd_int(dd_depends_on)
 
         try:
             if _editing_task_id["value"]:
@@ -349,14 +326,28 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 )
             _close_task_dialog()
             _refresh_tasks()
-        except Exception as ex:
-            logger.error("save failed: %s", ex, exc_info=True)
-            show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
+        except (ValidationError, CircularDependencyError, SelfDependencyError) as ex:
             task_dlg_err.value = str(ex)
-            try:
-                page.update()
-            except Exception as e:
-                logger.warning("load failed: %s", e, exc_info=True)
+            safe_page_update(page)
+        except NotFoundError as ex:
+            show_snack(page, str(ex), error=True)
+            _close_task_dialog()
+        except Exception as ex:
+            logger.error("save failed (unexpected): %s", ex, exc_info=True)
+            show_snack(page, "เกิดข้อผิดพลาดที่ไม่คาดคิด", error=True)
+            task_dlg_err.value = str(ex)
+            safe_page_update(page)
+
+    def _section_header(icon, label: str) -> ft.Row:
+        """A6: Section divider header for the task dialog."""
+        return ft.Row(
+            controls=[
+                ft.Icon(icon, color=ACCENT, size=14),
+                ft.Text(label, size=12, color=TEXT_SEC,
+                        weight=ft.FontWeight.W_600),
+            ],
+            spacing=6,
+        )
 
     task_dlg = ft.AlertDialog(
         modal=True,
@@ -364,13 +355,20 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         shape=ft.RoundedRectangleBorder(radius=12),
         title=task_dlg_title,
         content=ft.Container(
-            width=440,
+            width=460,
             content=ft.Column(
                 controls=[
+                    # ── Section 1: ข้อมูลหลัก ─────────────────────
+                    _section_header(ft.Icons.ASSIGNMENT_OUTLINED, "ข้อมูลหลัก"),
+                    ft.Divider(height=1, color=BORDER),
                     tf_title,
                     tf_desc,
                     ft.Row([dd_priority, dd_team_dlg], spacing=10),
                     dd_assignee,
+                    # ── Section 2: รายละเอียดเพิ่มเติม ────────────
+                    ft.Container(height=4),
+                    _section_header(ft.Icons.TUNE, "รายละเอียดเพิ่มเติม"),
+                    ft.Divider(height=1, color=BORDER),
                     tf_tags,
                     dd_depends_on,
                     ft.Row([
@@ -398,10 +396,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
 
     def _close_confirm(e=None):
         confirm_dlg.open = False
-        try:
-            page.update()
-        except Exception as e:
-            logger.warning("load failed: %s", e, exc_info=True)
+        safe_page_update(page)
 
     def _do_confirm(e):
         _close_confirm()
@@ -430,9 +425,9 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     # ══════════════════════════════════════════════════════════════
     def _on_team_dlg_change(e):
         """When team dropdown changes, refresh assignee list for that team."""
-        team_key = e.control.value or "none"
+        team_key = e.control.value or NO_SELECTION
         _populate_assignee_dropdown(team_key)
-        dd_assignee.value = "none"
+        dd_assignee.value = NO_SELECTION
         try:
             dd_assignee.update()
         except Exception as e:
@@ -445,19 +440,16 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         _editing_task_id["value"] = None
         tf_title.value = tf_desc.value = tf_tags.value = ""
         tf_start_date.value = tf_due_date.value = ""
-        dd_priority.value = "Medium"
+        dd_priority.value = DEFAULT_PRIORITY
         task_dlg_err.value = ""
         _populate_team_dropdown()
-        dd_team_dlg.value = "none"
-        _populate_assignee_dropdown("none")
-        dd_assignee.value = "none"
+        dd_team_dlg.value = NO_SELECTION
+        _populate_assignee_dropdown(NO_SELECTION)
+        dd_assignee.value = NO_SELECTION
         _populate_depends_on_dropdown(exclude_task_id=None)
-        dd_depends_on.value = "none"
+        dd_depends_on.value = NO_SELECTION
         task_dlg.open = True
-        try:
-            page.update()
-        except Exception as e:
-            logger.warning("load failed: %s", e, exc_info=True)
+        safe_page_update(page)
 
     def _open_edit(task):
         task_dlg_title.value = "แก้ไขงาน"
@@ -470,16 +462,13 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         tf_due_date.value    = format_date(task.due_date)   if task.due_date   else ""
         task_dlg_err.value   = ""
         _populate_team_dropdown()
-        dd_team_dlg.value    = str(task.team_id) if task.team_id else "none"
+        dd_team_dlg.value    = str(task.team_id) if task.team_id else NO_SELECTION
         _populate_assignee_dropdown(dd_team_dlg.value)
-        dd_assignee.value    = str(task.assignee_id) if task.assignee_id else "none"
+        dd_assignee.value    = str(task.assignee_id) if task.assignee_id else NO_SELECTION
         _populate_depends_on_dropdown(exclude_task_id=task.id)
-        dd_depends_on.value  = str(task.depends_on_id) if task.depends_on_id else "none"
+        dd_depends_on.value  = str(task.depends_on_id) if task.depends_on_id else NO_SELECTION
         task_dlg.open        = True
-        try:
-            page.update()
-        except Exception as e:
-            logger.warning("load failed: %s", e, exc_info=True)
+        safe_page_update(page)
 
     def _open_delete(task):
         confirm_msg.value = f'ต้องการลบงาน "{task.title}" ใช่ไหม?'
@@ -491,10 +480,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             _refresh_tasks()
         _confirm_fn["value"] = _do
         confirm_dlg.open = True
-        try:
-            page.update()
-        except Exception as e:
-            logger.warning("load failed: %s", e, exc_info=True)
+        safe_page_update(page)
 
     # ══════════════════════════════════════════════════════════════
     #  DEPENDENCY HELPERS (for detail panel)
@@ -504,7 +490,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         controls = []
         # ── Show prerequisite task ──────────────────────────────
         if task.depends_on_id:
-            dep = task_svc.task_repo.get_by_id(task.depends_on_id)
+            dep = task_svc.get_task_or_none(task.depends_on_id)
             if dep:
                 controls.append(ft.Divider(height=1, color=BORDER))
                 controls.append(
@@ -607,15 +593,15 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
 
         def _refresh_subtasks():
             db.refresh(task)
-            # Filter out soft-deleted subtasks before rendering
             subtask_col.controls = [
                 _subtask_row(st) for st in (task.subtasks or [])
                 if not getattr(st, "is_deleted", False)
             ]
             try:
-                subtask_col.update()
-            except Exception as e:
-                logger.warning("load failed: %s", e, exc_info=True)
+                if subtask_col.page:
+                    subtask_col.update()
+            except Exception:
+                pass
 
         def _confirm_delete_subtask(sid: int, title: str):
             """Show confirmation dialog before soft-deleting a subtask."""
@@ -625,10 +611,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 _refresh_subtasks()
             _confirm_fn["value"] = _do
             confirm_dlg.open = True
-            try:
-                page.update()
-            except Exception as ex:
-                logger.warning("open confirm subtask delete failed: %s", ex, exc_info=True)
+            safe_page_update(page)
 
         def _subtask_row(st) -> ft.Row:
             return ft.Row(
@@ -665,10 +648,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 task_svc.add_subtask(task.id, text)
                 new_sub_tf.value = ""
                 _refresh_subtasks()
-                try:
-                    page.update()
-                except Exception as e:
-                    logger.warning("load failed: %s", e, exc_info=True)
+                safe_page_update(page)
 
         _refresh_subtasks()
 
@@ -683,12 +663,13 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         )
 
         def _refresh_comments():
-            comments = task_svc.task_repo.get_comments(task.id)
+            comments = task_svc.get_comments(task.id)
             comment_col.controls = [_comment_bubble(c) for c in comments]
             try:
-                comment_col.update()
-            except Exception as e:
-                logger.warning("load failed: %s", e, exc_info=True)
+                if comment_col.page:
+                    comment_col.update()
+            except Exception:
+                pass
 
         def _comment_bubble(c) -> ft.Container:
             author_name = c.author.name if c.author else "ระบบ"
@@ -732,10 +713,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 task_svc.add_comment(task.id, body)
                 new_comment_tf.value = ""
                 _refresh_comments()
-                try:
-                    page.update()
-                except Exception as e:
-                    logger.warning("load failed: %s", e, exc_info=True)
+                safe_page_update(page)
 
         _refresh_comments()
 
@@ -757,6 +735,161 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         status_row = ft.Row(
             controls=[_status_btn(s) for s in STATUS_LIST],
             spacing=4, wrap=True,
+        )
+
+        # ── C3: Time Tracking section ────────────────────────────
+        from app.services.time_tracking_service import TimeTrackingService
+        time_svc = TimeTrackingService(db)
+
+        timer_status_text = ft.Text("", size=12, color=TEXT_SEC)
+        timer_total_text  = ft.Text("", size=12, color=TEXT_PRI,
+                                    weight=ft.FontWeight.W_500)
+        time_log_col      = ft.Column(spacing=4)
+        manual_min_tf     = ft.TextField(
+            hint_text="นาที", width=70, height=36,
+            border_color=BORDER, focused_border_color=ACCENT,
+            color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=6,
+            content_padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            text_size=12, keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        manual_note_tf = ft.TextField(
+            hint_text="หมายเหตุ (ไม่บังคับ)", expand=True, height=36,
+            border_color=BORDER, focused_border_color=ACCENT,
+            color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=6,
+            content_padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            text_size=12,
+        )
+
+        def _fmt_minutes(m: int) -> str:
+            if m < 60:
+                return f"{m} นาที"
+            h, rem = divmod(m, 60)
+            return f"{h} ชม. {rem} นาที" if rem else f"{h} ชม."
+
+        def _refresh_time_section():
+            running = time_svc.is_running(task.id)
+            total   = time_svc.get_total_minutes(task.id)
+            timer_total_text.value = f"รวม: {_fmt_minutes(total)}" if total else "ยังไม่มีบันทึก"
+            if running:
+                log = time_svc.get_running_log(task.id)
+                timer_status_text.value = (
+                    f"⏱ กำลังบันทึก... (เริ่ม {log.started_at.strftime('%H:%M')})"
+                )
+                timer_status_text.color = "#22C55E"
+            else:
+                timer_status_text.value = ""
+            # Recent logs (last 5)
+            logs = time_svc.get_logs_by_task(task.id)[:5]
+            time_log_col.controls = []
+            for lg in logs:
+                time_log_col.controls.append(ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.ACCESS_TIME, color=TEXT_SEC, size=12),
+                        ft.Text(
+                            f"{_fmt_minutes(lg.duration_minutes or 0)}  "
+                            f"{lg.started_at.strftime('%d/%m %H:%M')}",
+                            size=11, color=TEXT_SEC, expand=True,
+                        ),
+                        ft.Text(lg.note or "", size=11, color=TEXT_SEC),
+                        ft.IconButton(
+                            icon=ft.Icons.DELETE_OUTLINE, icon_size=13,
+                            icon_color=COLOR_URGENT, tooltip="ลบ",
+                            on_click=lambda e, lid=lg.id: (
+                                time_svc.delete_log(lid),
+                                _refresh_time_section(),
+                                _update_time_ui(),
+                            ),
+                        ),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ))
+            _update_time_ui()
+
+        def _update_time_ui():
+            for ctrl in [timer_status_text, timer_total_text, time_log_col]:
+                try:
+                    ctrl.update()
+                except Exception:
+                    pass
+
+        def _toggle_timer(e):
+            if time_svc.is_running(task.id):
+                time_svc.stop_timer(task.id)
+                timer_toggle_btn.icon      = ft.Icons.PLAY_ARROW
+                timer_toggle_btn.icon_color = ACCENT
+                timer_toggle_btn.tooltip   = "เริ่มบันทึก"
+            else:
+                time_svc.start_timer(task.id)
+                timer_toggle_btn.icon      = ft.Icons.STOP
+                timer_toggle_btn.icon_color = "#EF4444"
+                timer_toggle_btn.tooltip   = "หยุดบันทึก"
+            try:
+                timer_toggle_btn.update()
+            except Exception:
+                pass
+            _refresh_time_section()
+
+        def _add_manual(e):
+            try:
+                mins = int((manual_min_tf.value or "0").strip())
+            except ValueError:
+                mins = 0
+            if mins > 0:
+                time_svc.add_manual_log(
+                    task.id, mins, note=manual_note_tf.value or "")
+                manual_min_tf.value  = ""
+                manual_note_tf.value = ""
+                try:
+                    manual_min_tf.update()
+                    manual_note_tf.update()
+                except Exception:
+                    pass
+                _refresh_time_section()
+
+        _is_running_now = time_svc.is_running(task.id)
+        timer_toggle_btn = ft.IconButton(
+            icon=ft.Icons.STOP if _is_running_now else ft.Icons.PLAY_ARROW,
+            icon_color="#EF4444" if _is_running_now else ACCENT,
+            icon_size=22,
+            tooltip="หยุดบันทึก" if _is_running_now else "เริ่มบันทึก",
+            on_click=_toggle_timer,
+        )
+
+        _refresh_time_section()
+
+        time_section = ft.Column(
+            controls=[
+                ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.TIMER_OUTLINED, color=ACCENT, size=15),
+                        ft.Text("บันทึกเวลา", size=13,
+                                weight=ft.FontWeight.W_500, color=TEXT_PRI),
+                        ft.Container(expand=True),
+                        timer_toggle_btn,
+                    ],
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                timer_status_text,
+                timer_total_text,
+                time_log_col,
+                # Manual log row
+                ft.Row(
+                    controls=[
+                        manual_min_tf,
+                        manual_note_tf,
+                        ft.IconButton(
+                            icon=ft.Icons.ADD_CIRCLE_OUTLINE,
+                            icon_color=ACCENT, icon_size=20,
+                            tooltip="บันทึกเวลาแบบ manual",
+                            on_click=_add_manual,
+                        ),
+                    ],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ],
+            spacing=4,
         )
 
         # ── Header ────────────────────────────────────────────────
@@ -816,6 +949,11 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
 
                     ft.Divider(height=1, color=BORDER),
 
+                    # C3: Time tracking
+                    time_section,
+
+                    ft.Divider(height=1, color=BORDER),
+
                     # Sub-tasks
                     ft.Text("Sub-tasks", size=13,
                             weight=ft.FontWeight.W_500, color=TEXT_PRI),
@@ -861,17 +999,18 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     #  TASK ROW
     # ══════════════════════════════════════════════════════════════
     def _build_task_row(task) -> ft.Container:
-        is_selected = selected_task_id["value"] == task.id
-        overdue     = is_overdue(task.due_date) and task.status not in (
+        is_selected          = selected_task_id["value"] == task.id
+        overdue              = is_overdue(task.due_date) and task.status not in (
             TaskStatus.DONE, TaskStatus.CANCELLED)
+        is_done_or_cancelled = task.status in (TaskStatus.DONE, TaskStatus.CANCELLED)
 
         left_accent_color = priority_color(task.priority.value)
-        assignee_name = task.assignee.name if task.assignee else "—"
+        assignee_name     = task.assignee.name if task.assignee else "—"
 
         # Subtask progress
-        _all_st  = [st for st in (task.subtasks or [])
-                    if not getattr(st, "is_deleted", False)]
-        _done_st = sum(1 for st in _all_st if st.is_done)
+        _all_st   = [st for st in (task.subtasks or [])
+                     if not getattr(st, "is_deleted", False)]
+        _done_st  = sum(1 for st in _all_st if st.is_done)
         _total_st = len(_all_st)
         _st_color = COLOR_DONE if (_total_st > 0 and _done_st == _total_st) else TEXT_SEC
 
@@ -888,9 +1027,38 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             spacing=4, wrap=True,
         )
 
+        # ── A2: Action buttons — hidden by default, revealed on hover ──
+        action_row = ft.Row(
+            controls=[
+                ft.IconButton(
+                    icon=ft.Icons.EDIT_OUTLINED,
+                    icon_color=TEXT_SEC, icon_size=16,
+                    tooltip="แก้ไข",
+                    on_click=lambda e, t=task: _open_edit(t),
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.DELETE_OUTLINE,
+                    icon_color=COLOR_URGENT, icon_size=16,
+                    tooltip="ลบ",
+                    on_click=lambda e, t=task: _open_delete(t),
+                ),
+            ],
+            spacing=0,
+            visible=is_selected,   # stay visible when card is selected
+        )
+
+        def _on_hover(e, ar=action_row, sel=is_selected):
+            ar.visible = (e.data == "true") or sel
+            try:
+                ar.update()
+            except Exception:
+                pass
+
         return ft.Container(
             bgcolor=BG_CARD if not is_selected else ACCENT + "11",
             border_radius=8,
+            # ── A3: Fade completed/cancelled tasks ──────────────────
+            opacity=0.55 if is_done_or_cancelled else 1.0,
             border=ft.border.only(
                 left=ft.BorderSide(3, left_accent_color),
                 top=ft.BorderSide(1, ACCENT + "44" if is_selected else BORDER),
@@ -900,6 +1068,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             padding=ft.padding.symmetric(horizontal=14, vertical=10),
             ink=True,
             on_click=lambda e, t=task: _select_task(t),
+            on_hover=_on_hover,
             content=ft.Row(
                 controls=[
                     # Main info
@@ -907,11 +1076,15 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                         controls=[
                             ft.Row(
                                 controls=[
-                                    ft.Text(task.title, size=14,
-                                            weight=ft.FontWeight.W_500,
-                                            color=TEXT_PRI, expand=True,
-                                            no_wrap=True,
-                                            overflow=ft.TextOverflow.ELLIPSIS),
+                                    # ── A3: Dim title color for done/cancelled (container opacity handles fade) ──
+                                    ft.Text(
+                                        task.title, size=14,
+                                        weight=ft.FontWeight.W_500,
+                                        color=TEXT_SEC if is_done_or_cancelled else TEXT_PRI,
+                                        expand=True,
+                                        no_wrap=True,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
                                     _status_chip(task.status.value),
                                     _priority_chip(task.priority.value),
                                 ],
@@ -928,9 +1101,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                                             size=13),
                                     _due_label(task.due_date),
                                     *([
-                                        ft.Container(
-                                            width=1, height=12, bgcolor=BORDER,
-                                        ),
+                                        ft.Container(width=1, height=12, bgcolor=BORDER),
                                         ft.Icon(ft.Icons.CHECKLIST,
                                                 color=_st_color, size=13),
                                         ft.Text(f"{_done_st}/{_total_st}",
@@ -944,24 +1115,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                         ],
                         spacing=4, expand=True,
                     ),
-                    # Action buttons
-                    ft.Row(
-                        controls=[
-                            ft.IconButton(
-                                icon=ft.Icons.EDIT_OUTLINED,
-                                icon_color=TEXT_SEC, icon_size=16,
-                                tooltip="แก้ไข",
-                                on_click=lambda e, t=task: _open_edit(t),
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.DELETE_OUTLINE,
-                                icon_color=COLOR_URGENT, icon_size=16,
-                                tooltip="ลบ",
-                                on_click=lambda e, t=task: _open_delete(t),
-                            ),
-                        ],
-                        spacing=0,
-                    ),
+                    action_row,
                 ],
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1027,8 +1181,16 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         _refresh_task_list_only()
 
     def _refresh_task_list_only():
+        _filter_loading.visible = True
+        safe_update(_filter_loading)
         tasks = _filtered_tasks()
-        task_list_col.controls = [_build_task_row(t) for t in tasks] or [_empty_state()]
+        if tasks:
+            task_list_col.controls = [_build_task_row(t) for t in tasks]
+        else:
+            # A5: show filtered-empty vs truly-empty state
+            all_count = len(task_svc.get_all_tasks())
+            task_list_col.controls = [_empty_state(is_filtered=all_count > 0)]
+        _filter_loading.visible = False
         safe_update(task_list_col)
 
     def _refresh_tasks():
@@ -1048,9 +1210,9 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         fs = filter_status["value"]
         fp = filter_priority["value"]
         sq = search_query["value"].lower()
-        if fs != "ทั้งหมด":
+        if fs != ALL_FILTER:
             tasks = [t for t in tasks if t.status.value == fs]
-        if fp != "ทั้งหมด":
+        if fp != ALL_FILTER:
             tasks = [t for t in tasks if t.priority.value == fp]
         if sq:
             tasks = [t for t in tasks if sq in t.title.lower()
@@ -1070,15 +1232,32 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             tasks.sort(key=lambda t: t.title.lower())
         return tasks
 
-    def _empty_state() -> ft.Container:
+    def _empty_state(is_filtered: bool = False) -> ft.Container:
+        """A5: Differentiate between 'no tasks' and 'filter returned nothing'."""
+        if is_filtered:
+            icon     = ft.Icons.SEARCH_OFF
+            title    = "ไม่พบงานที่ตรงกับเงื่อนไข"
+            subtitle = "ลองปรับ filter หรือล้างตัวกรองเพื่อดูงานทั้งหมด"
+            extra    = [ft.TextButton(
+                "ล้างตัวกรอง",
+                icon=ft.Icons.FILTER_ALT_OFF,
+                style=ft.ButtonStyle(color=ACCENT),
+                on_click=lambda e: _clear_filters(),
+            )]
+        else:
+            icon     = ft.Icons.TASK_ALT_OUTLINED
+            title    = "ไม่มีงาน"
+            subtitle = "กดปุ่ม '+ สร้างงาน' เพื่อเริ่มต้น"
+            extra    = []
+
         return ft.Container(
-            alignment=ft.alignment.Alignment.CENTER, padding=40,
+            alignment=ft.alignment.Alignment(0, 0), padding=40,
             content=ft.Column(
                 controls=[
-                    ft.Icon(ft.Icons.TASK_ALT_OUTLINED, color=TEXT_SEC, size=48),
-                    ft.Text("ไม่มีงาน", size=16, color=TEXT_SEC),
-                    ft.Text("กดปุ่ม '+ สร้างงาน' เพื่อเริ่มต้น",
-                            size=13, color=TEXT_SEC),
+                    ft.Icon(icon, color=TEXT_SEC, size=48),
+                    ft.Text(title, size=16, color=TEXT_SEC),
+                    ft.Text(subtitle, size=13, color=TEXT_SEC),
+                    *extra,
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8,
@@ -1089,8 +1268,121 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     _refresh_task_list_only()
 
     # ══════════════════════════════════════════════════════════════
+    #  UX#4: RECYCLE BIN (soft-deleted tasks)
+    # ══════════════════════════════════════════════════════════════
+    deleted_col         = ft.Column(spacing=6)
+    trash_section_open  = {"value": False}
+
+    def _refresh_deleted():
+        deleted = task_svc.get_deleted_tasks()
+        if not deleted:
+            deleted_col.controls = [
+                ft.Text("ไม่มีงานที่ถูกลบ", size=13, color=TEXT_SEC)
+            ]
+        else:
+            deleted_col.controls = [_deleted_task_row(t) for t in deleted]
+        safe_update(deleted_col)
+
+    def _deleted_task_row(task) -> ft.Container:
+        return ft.Container(
+            bgcolor=BG_CARD,
+            border_radius=8,
+            border=ft.border.all(1, BORDER),
+            padding=ft.padding.symmetric(horizontal=14, vertical=8),
+            opacity=0.6,
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.DELETE_OUTLINE, color=TEXT_SEC, size=16),
+                    ft.Column(
+                        controls=[
+                            ft.Text(task.title, size=13, color=TEXT_SEC,
+                                    weight=ft.FontWeight.W_500,
+                                    no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
+                            ft.Text(_priority_chip(task.priority.value).content.value,
+                                    size=11, color=TEXT_SEC),
+                        ],
+                        spacing=2, expand=True,
+                    ),
+                    ft.TextButton(
+                        "กู้คืน",
+                        icon=ft.Icons.RESTORE,
+                        style=ft.ButtonStyle(color=ACCENT),
+                        on_click=lambda e, tid=task.id: _restore_task(tid),
+                    ),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        )
+
+    def _restore_task(task_id: int):
+        try:
+            task_svc.restore_task(task_id)
+            show_snack(page, "กู้คืนงานสำเร็จ")
+            _refresh_deleted()
+            _refresh_tasks()
+        except Exception as ex:
+            show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
+
+    trash_body = ft.Column(
+        controls=[deleted_col],
+        spacing=0,
+        visible=False,
+    )
+
+    trash_toggle_btn = ft.TextButton(
+        "แสดงงานที่ถูกลบ",
+        icon=ft.Icons.DELETE_OUTLINE,
+        style=ft.ButtonStyle(color=TEXT_SEC),
+    )
+
+    def _toggle_trash(e):
+        open_ = not trash_section_open["value"]
+        trash_section_open["value"] = open_
+        trash_body.visible = open_
+        trash_toggle_btn.text  = "ซ่อนงานที่ถูกลบ" if open_ else "แสดงงานที่ถูกลบ"
+        trash_toggle_btn.icon  = ft.Icons.EXPAND_LESS if open_ else ft.Icons.DELETE_OUTLINE
+        if open_:
+            _refresh_deleted()
+        try:
+            trash_body.update()
+            trash_toggle_btn.update()
+        except Exception:
+            pass
+
+    trash_toggle_btn.on_click = _toggle_trash
+
+    # ══════════════════════════════════════════════════════════════
     #  FILTER BAR
     # ══════════════════════════════════════════════════════════════
+    # ── A4: Clear filter helpers ──────────────────────────────────
+    def _is_filtered() -> bool:
+        return (filter_status["value"]   != ALL_FILTER
+                or filter_priority["value"] != ALL_FILTER
+                or sort_order["value"]      != "สร้างล่าสุด"
+                or bool(search_query["value"]))
+
+    def _clear_filters():
+        filter_status["value"]   = ALL_FILTER
+        filter_priority["value"] = ALL_FILTER
+        sort_order["value"]      = "สร้างล่าสุด"
+        search_query["value"]    = ""
+        search_tf.value          = ""
+        try:
+            search_tf.update()
+        except Exception:
+            pass
+        _refresh_task_list_only()
+        _rebuild_filters()
+
+    clear_filter_btn = ft.TextButton(
+        "ล้างตัวกรอง",
+        icon=ft.Icons.FILTER_ALT_OFF,
+        style=ft.ButtonStyle(color=COLOR_URGENT),
+        visible=False,
+        on_click=lambda e: _clear_filters(),
+    )
+
     def _filter_chip(label: str, key: str, state_dict: dict,
                      refresh_fn) -> ft.Container:
         is_active = state_dict["value"] == label
@@ -1113,7 +1405,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     # Status filter row
     status_filters = ft.Row(
         controls=[
-            _filter_chip("ทั้งหมด", "status", filter_status,
+            _filter_chip(ALL_FILTER, "status", filter_status,
                          lambda: (_refresh_task_list_only(), _rebuild_filters())),
             *[_filter_chip(s, "status", filter_status,
                            lambda: (_refresh_task_list_only(), _rebuild_filters()))
@@ -1124,7 +1416,7 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
 
     priority_filters = ft.Row(
         controls=[
-            _filter_chip("ทั้งหมด", "priority", filter_priority,
+            _filter_chip(ALL_FILTER, "priority", filter_priority,
                          lambda: (_refresh_task_list_only(), _rebuild_filters())),
             *[_filter_chip(p, "priority", filter_priority,
                            lambda: (_refresh_task_list_only(), _rebuild_filters()))
@@ -1146,35 +1438,44 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         ),
     )
 
-    sort_dd = ft.Dropdown(
-        label="เรียงโดย",
-        options=[ft.dropdown.Option(o) for o in SORT_OPTIONS],
-        value="สร้างล่าสุด",
-        border_color=BORDER, focused_border_color=ACCENT,
-        label_style=ft.TextStyle(color=TEXT_SEC),
-        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
-        width=160, text_size=12,
-        content_padding=ft.padding.symmetric(horizontal=8, vertical=2),
-        on_select=lambda e: (
-            sort_order.update({"value": e.control.value or "สร้างล่าสุด"}),
-            _refresh_task_list_only(),
-        ),
+    sort_filters = ft.Row(
+        controls=[
+            _filter_chip(o, "sort", sort_order,
+                         lambda: (_refresh_task_list_only(), _rebuild_filters()))
+            for o in SORT_OPTIONS
+        ],
+        spacing=6, wrap=False,
     )
 
-    filter_col = ft.Row(
+    filter_col = ft.Column(
         controls=[
-            ft.Text("Status:", size=12, color=TEXT_SEC),
-            status_filters,
-            ft.Container(width=1, height=24, bgcolor=BORDER),
-            ft.Text("Priority:", size=12, color=TEXT_SEC),
-            priority_filters,
-            ft.Container(width=1, height=24, bgcolor=BORDER),
-            ft.Text("เรียง:", size=12, color=TEXT_SEC),
-            sort_dd,
+            # แถว 1: Status filter
+            ft.Row(
+                controls=[
+                    ft.Text("Status:", size=12, color=TEXT_SEC),
+                    status_filters,
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            # แถว 2: Priority + Sort + A4 Clear button
+            ft.Row(
+                controls=[
+                    ft.Text("Priority:", size=12, color=TEXT_SEC),
+                    priority_filters,
+                    ft.Container(width=1, height=24, bgcolor=BORDER),
+                    ft.Text("เรียง:", size=12, color=TEXT_SEC),
+                    sort_filters,
+                    ft.Container(width=1, height=24, bgcolor=BORDER),
+                    clear_filter_btn,
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                scroll=ft.ScrollMode.AUTO,
+            ),
         ],
         spacing=8,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        scroll=ft.ScrollMode.AUTO,
     )
 
     filter_container = ft.Ref[ft.Column]()
@@ -1182,29 +1483,77 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     def _rebuild_filters():
         """Rebuild filter chips so active state re-renders."""
         new_status_chips = [
-            _filter_chip("ทั้งหมด", "s", filter_status,
+            _filter_chip(ALL_FILTER, "s", filter_status,
                          lambda: (_refresh_task_list_only(), _rebuild_filters())),
             *[_filter_chip(s, "s", filter_status,
                            lambda: (_refresh_task_list_only(), _rebuild_filters()))
               for s in STATUS_LIST],
         ]
         new_priority_chips = [
-            _filter_chip("ทั้งหมด", "p", filter_priority,
+            _filter_chip(ALL_FILTER, "p", filter_priority,
                          lambda: (_refresh_task_list_only(), _rebuild_filters())),
             *[_filter_chip(p, "p", filter_priority,
                            lambda: (_refresh_task_list_only(), _rebuild_filters()))
               for p in PRIORITY_LIST],
         ]
-        status_filters.controls  = new_status_chips
+        new_sort_chips = [
+            _filter_chip(o, "sort", sort_order,
+                         lambda: (_refresh_task_list_only(), _rebuild_filters()))
+            for o in SORT_OPTIONS
+        ]
+        status_filters.controls   = new_status_chips
         priority_filters.controls = new_priority_chips
+        sort_filters.controls     = new_sort_chips
+        # A4: show/hide clear button based on active filters
+        clear_filter_btn.visible  = _is_filtered()
+        for ctrl in [status_filters, priority_filters, sort_filters, clear_filter_btn]:
+            safe_update(ctrl)
+
+    # ══════════════════════════════════════════════════════════════
+    #  UX#1: QUICK-ADD INLINE BAR
+    # ══════════════════════════════════════════════════════════════
+    quick_add_tf = ft.TextField(
+        hint_text="+ เพิ่มงานด่วน... (พิมพ์ชื่อแล้วกด Enter)",
+        border_color=BORDER, focused_border_color=ACCENT,
+        color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+        height=40, text_size=13, expand=True,
+        content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
+    )
+
+    def _quick_add_task(e=None):
+        title = (quick_add_tf.value or "").strip()
+        if not title:
+            return
         try:
-            status_filters.update()
-        except Exception as e:
-            logger.warning("load failed: %s", e, exc_info=True)
-        try:
-            priority_filters.update()
-        except Exception as e:
-            logger.warning("load failed: %s", e, exc_info=True)
+            task_svc.create_task(title=title)
+            quick_add_tf.value = ""
+            try:
+                quick_add_tf.update()
+            except Exception:
+                pass
+            _refresh_tasks()
+            show_snack(page, f"สร้างงาน \"{title}\" แล้ว")
+        except Exception as ex:
+            show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
+
+    quick_add_tf.on_submit = _quick_add_task
+
+    quick_add_bar = ft.Container(
+        content=ft.Row(
+            controls=[
+                quick_add_tf,
+                ft.IconButton(
+                    icon=ft.Icons.ADD_CIRCLE,
+                    icon_color=ACCENT, icon_size=24,
+                    tooltip="สร้างงานด่วน",
+                    on_click=_quick_add_task,
+                ),
+            ],
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        padding=ft.padding.only(bottom=4),
+    )
 
     # ══════════════════════════════════════════════════════════════
     #  TOP BAR
@@ -1240,6 +1589,82 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     )
 
     # ══════════════════════════════════════════════════════════════
+    #  NOTIFICATION PANEL (near-due tasks)
+    # ══════════════════════════════════════════════════════════════
+    _dismissed_near_due: dict = {"ids": set()}
+
+    def _build_notif_panel() -> ft.Container:
+        near_tasks = task_svc.get_near_due_tasks(days_ahead=3)
+        rows_data = [
+            (t.id, t.title, t.due_date)
+            for t in near_tasks
+            if t.id not in _dismissed_near_due["ids"]
+        ]
+        if not rows_data:
+            return ft.Container(visible=False, height=0)
+
+        def _dismiss_all(e):
+            for tid, _, _ in rows_data:
+                _dismissed_near_due["ids"].add(tid)
+            notif_panel.visible = False
+            safe_page_update(page)
+
+        items = []
+        for _tid, title, due in rows_data:
+            d = days_until(due)
+            if d is None or d < 0:
+                continue
+            if d == 0:
+                label, lcolor = "ครบกำหนดวันนี้", COLOR_URGENT
+            elif d == 1:
+                label, lcolor = "พรุ่งนี้", COLOR_NEAR
+            else:
+                label, lcolor = f"อีก {d} วัน", COLOR_NEAR
+            items.append(
+                ft.Row(controls=[
+                    ft.Icon(ft.Icons.ALARM, size=13, color=lcolor),
+                    ft.Text(f"{title[:38]}{'…' if len(title) > 38 else ''} — {label}",
+                            size=12, color=TEXT_PRI),
+                ], spacing=5)
+            )
+
+        if not items:
+            return ft.Container(visible=False, height=0)
+
+        return ft.Container(
+            bgcolor="#FFF7ED",
+            border=ft.border.all(1, "#FED7AA"),
+            border_radius=8,
+            padding=ft.padding.all(10),
+            margin=ft.margin.only(bottom=8),
+            content=ft.Row(
+                controls=[
+                    ft.Column(
+                        controls=[
+                            ft.Row(controls=[
+                                ft.Icon(ft.Icons.NOTIFICATIONS_ACTIVE,
+                                        color=COLOR_NEAR, size=15),
+                                ft.Text("งานใกล้ครบกำหนด", size=13,
+                                        weight=ft.FontWeight.W_500, color=TEXT_PRI),
+                            ], spacing=6),
+                            *items,
+                        ],
+                        spacing=4, expand=True,
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE, icon_size=15, icon_color=TEXT_SEC,
+                        tooltip="ปิด",
+                        on_click=_dismiss_all,
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+        )
+
+    notif_panel = _build_notif_panel()
+
+    # ══════════════════════════════════════════════════════════════
     #  ROOT LAYOUT
     # ══════════════════════════════════════════════════════════════
     left_pane = ft.Container(
@@ -1248,15 +1673,45 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             controls=[
                 top_bar,
                 ft.Divider(height=16, color=BORDER),
+                notif_panel,           # near-due notification banner
                 filter_col,
                 ft.Divider(height=12, color=BORDER),
+                quick_add_bar,         # UX#1: quick-add inline bar
+                _filter_loading,       # B4-T1: loading indicator while filtering
                 task_list_col,
+                ft.Divider(height=8, color=BORDER),
+                trash_toggle_btn,      # UX#4: recycle bin toggle
+                trash_body,            # UX#4: deleted tasks list
             ],
             spacing=0,
             expand=True,
         ),
         padding=ft.padding.all(24),
     )
+
+    # ── Keyboard shortcuts ──────────────────────────────────────────
+    def _shortcut_esc():
+        if task_dlg.open:
+            _close_task_dialog()
+        elif selected_task_id["value"] is not None:
+            selected_task_id["value"] = None
+            detail_panel.visible = False
+            safe_page_update(page)
+
+    def _shortcut_enter():
+        if task_dlg.open:
+            _save_task(None)
+
+    def _shortcut_search():
+        try:
+            search_tf.focus()
+        except Exception:
+            pass
+
+    shortcut_registry.register("ctrl_n", _open_create)
+    shortcut_registry.register("esc",    _shortcut_esc)
+    shortcut_registry.register("enter",  _shortcut_enter)
+    shortcut_registry.register("ctrl_f", _shortcut_search)
 
     return ft.Container(
         expand=True,

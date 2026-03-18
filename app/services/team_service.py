@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.team import Team
 from app.models.user import User, UserRole
+from app.repositories.task_repo import TaskRepository
 from app.repositories.team_repo import TeamRepository
 from app.repositories.user_repo import UserRepository
 from app.utils.exceptions import NotFoundError, DuplicateNameError
@@ -19,6 +20,7 @@ class TeamService:
 
     def __init__(self, db: Session) -> None:
         self.db = db
+        self.task_repo = TaskRepository(db)
         self.team_repo = TeamRepository(db)
         self.user_repo = UserRepository(db)
 
@@ -65,27 +67,22 @@ class TeamService:
 
     def delete_member(self, user_id: int) -> None:
         """Soft-delete a member: unassign their active tasks, then mark deleted."""
-        from app.models.task import Task, TaskStatus
         user = self.user_repo.get_by_id(user_id)
         if not user:
             raise NotFoundError("สมาชิก", user_id)
         # Unassign active tasks so they don't hold a reference to a deleted user
-        active_tasks = (
-            self.db.query(Task)
-            .filter(
-                Task.assignee_id == user_id,
-                Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
-                Task.is_deleted == False,  # noqa: E712
-            )
-            .all()
-        )
-        for task in active_tasks:
-            task.assignee_id = None
-        self.db.commit()
+        count = self.task_repo.unassign_user(user_id)
         logger.info("Soft-deleting member id=%s, unassigned %d active task(s)",
-                    user_id, len(active_tasks))
+                    user_id, count)
         if not self.user_repo.delete(user_id):
             raise NotFoundError("สมาชิก", user_id)
+
+    def get_members_for_dropdown(self, team_id: Optional[int] = None) -> List[User]:
+        """Return active users for assignee dropdown, optionally filtered by team_id.
+        Views should call this instead of accessing user_repo directly."""
+        if team_id is not None:
+            return self.user_repo.get_by_team(team_id, active_only=True)
+        return self.user_repo.get_all(active_only=True)
 
     def toggle_member_active(self, user_id: int) -> User:
         user = self.user_repo.toggle_active(user_id)
@@ -96,17 +93,8 @@ class TeamService:
     # ── Workload ──────────────────────────────────────────────────
     def get_workload(self, team_id: int) -> Dict[int, int]:
         """Return {user_id: active_task_count} for team members."""
-        from app.models.task import Task, TaskStatus
         members = self.user_repo.get_by_team(team_id, active_only=True)
-        result: Dict[int, int] = {}
-        for member in members:
-            count = (
-                self.db.query(Task)
-                .filter(
-                    Task.assignee_id == member.id,
-                    Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
-                )
-                .count()
-            )
-            result[member.id] = count
-        return result
+        return {
+            member.id: self.task_repo.count_active_by_assignee(member.id)
+            for member in members
+        }

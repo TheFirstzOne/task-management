@@ -2,7 +2,7 @@
 DiaryEntry model — บันทึกการทำงานรายวัน
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, Text, DateTime
 from app.database import Base
 
@@ -12,8 +12,8 @@ class DiaryEntry(Base):
 
     id         = Column(Integer, primary_key=True, autoincrement=True)
     content    = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def __repr__(self) -> str:
         return f"<DiaryEntry id={self.id} created_at={self.created_at}>"

@@ -52,24 +52,42 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
         status_text.value = ""
         page.update()
 
-    def export_word(e):
-        filepath = os.path.join(DATA_DIR, "job_diary.docx")
+    def _do_export(export_fn, filepath: str):
+        """Shared export logic: call service fn, show status, auto-open file."""
         try:
-            svc.export_to_word(filepath)
+            export_fn(filepath)
             status_text.value = f"Export สำเร็จ: {os.path.basename(filepath)}"
             status_text.color = theme.COLOR_DONE
             page.update()
-            # Open with default Word app
             try:
                 os.startfile(filepath)
             except Exception as ex:
                 logger.debug("open file failed: %s", ex)
         except Exception as ex:
-            logger.error("save failed: %s", ex, exc_info=True)
+            logger.error("export failed: %s", ex, exc_info=True)
             show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
             status_text.value = f"Export ผิดพลาด: {ex}"
             status_text.color = theme.COLOR_OVERDUE
             page.update()
+
+    def export_word(e):
+        _do_export(
+            lambda fp: svc.export_to_word(fp),
+            os.path.join(DATA_DIR, "job_diary.docx"),
+        )
+
+    def export_pdf(e):
+        _do_export(
+            lambda fp: svc.export_to_pdf(fp),
+            os.path.join(DATA_DIR, "job_diary.pdf"),
+        )
+
+    # ── Export button style (shared concept) ──────────────────────
+    def _export_btn(label: str, icon, on_click, bgcolor: str) -> ft.ElevatedButton:
+        return ft.ElevatedButton(
+            label, icon=icon, on_click=on_click,
+            style=ft.ButtonStyle(bgcolor=bgcolor, color="#FFFFFF", padding=12),
+        )
 
     save_btn = ft.ElevatedButton(
         "บันทึก",
@@ -83,11 +101,11 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
         on_click=clear_text,
         style=ft.ButtonStyle(bgcolor=theme.COLOR_PENDING, color="#FFFFFF", padding=12),
     )
-    export_btn = ft.ElevatedButton(
-        "Export Word",
-        icon=ft.Icons.DESCRIPTION_OUTLINED,
-        on_click=export_word,
-        style=ft.ButtonStyle(bgcolor=theme.COLOR_DONE, color="#FFFFFF", padding=12),
+    export_word_btn = _export_btn(
+        "Export Word", ft.Icons.DESCRIPTION_OUTLINED, export_word, theme.COLOR_DONE,
+    )
+    export_pdf_btn = _export_btn(
+        "Export PDF", ft.Icons.PICTURE_AS_PDF_OUTLINED, export_pdf, "#EF4444",
     )
 
     write_tab = ft.Container(
@@ -95,7 +113,7 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
             controls=[
                 diary_field,
                 ft.Row(
-                    controls=[save_btn, clear_btn, export_btn],
+                    controls=[save_btn, clear_btn, export_word_btn, export_pdf_btn],
                     alignment=ft.MainAxisAlignment.CENTER,
                     spacing=10,
                 ),

@@ -2,7 +2,7 @@
 Team model — ทีมงาน
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -15,8 +15,8 @@ class Team(Base):
     name        = Column(String(100), nullable=False, unique=True)
     description = Column(Text, nullable=True)
     is_deleted  = Column(Boolean, default=False, nullable=False, server_default="0")
-    created_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    updated_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     # Relationships
     members = relationship("User", back_populates="team", cascade="all, delete-orphan")

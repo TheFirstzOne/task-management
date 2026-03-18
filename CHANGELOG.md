@@ -4,6 +4,40 @@
 
 ---
 
+## Phase 16 — Architecture Hardening + Features ✅
+
+### Critical Architecture Fixes
+- **C1/C2** `task_view.py` — ลบการเรียก `task_svc.task_repo.*` โดยตรงจาก View; เพิ่ม `get_task_or_none()` + `get_comments()` ใน `TaskService`
+- **C3** `task_view.py:1312` — ย้าย raw ORM query ออกจาก View → `TaskRepository.get_deleted()` + `TaskService.get_deleted_tasks()`
+- **C4** `task_service.py` — `restore_task()` ใช้ `TaskRepository.restore()` แทน raw query
+- **C5** `team_service.py` — inject `TaskRepository`; แทน raw queries ด้วย `unassign_user()` + `count_active_by_assignee()`
+- **C6** สร้าง `app/repositories/time_log_repo.py` — แยก DB logic ออกจาก `TimeTrackingService` ทั้งหมด
+
+### Warnings Fixed
+- `task_service.py:176` — Guard `None` ก่อนเรียก `.title` ป้องกัน `AttributeError`
+- `exceptions.py` — เปลี่ยน param `id` → `entity_id` (ไม่ shadow built-in)
+- `ui_helpers.py` — `show_snack` log warning แทน silent `pass`
+- `team_service.py` — แก้ `if team_id:` → `if team_id is not None:` (ป้องกัน bug กับ id=0)
+
+### Refactors
+- `task_view.py` — `_dd_int()` helper ลด duplicate dropdown parse 3 จุด
+- `task_view.py` — `_rebuild_filters` 4 try/except → `for ctrl in [...]: safe_update(ctrl)`
+- `task_view.py` — inline `try: page.update()` 8 จุด → `safe_page_update(page)`
+- `task_view.py` — date picker try/except → `safe_update()`
+- `dashboard_view.py` — `STATUS_COLORS`/`PRIO_COLORS` ใช้ `status_color()`/`priority_color()` จาก `theme.py` (ซิงค์สีอัตโนมัติ)
+
+### Features
+- **Near-due Notification Panel** — banner สีส้มใน task view แสดงงานที่ครบกำหนดใน 3 วัน (dismiss ได้)
+- **Near-due Badge** — badge สีส้มใน sidebar ข้างๆ badge overdue สีแดง
+- **Keyboard Shortcuts** — `shortcut_registry.py`; `Ctrl+N` สร้างงาน, `Esc` ปิด dialog, `Enter` submit, `Ctrl+F` focus search
+
+### Tests
+- เพิ่ม `tests/test_task_service_phase16.py` — 36 tests ครอบคลุมทุก method ใหม่
+- แก้ `tests/test_exceptions.py` — ปรับให้ตรงกับ `entity_id` rename
+- **Total: 139/139 tests passed**
+
+---
+
 ## Phase 1 — Core Setup ✅
 
 - สร้างโครงสร้างโปรเจกต์ตาม Architecture (Repository Pattern + Service Layer)
@@ -376,10 +410,277 @@
 
 ---
 
-### สิ่งที่ต้องทำเพิ่มเติม (Planned)
+---
 
-| รายการ | รายละเอียด |
-|---|---|
-| เลือกไฟล์ Database จากไดร์ฟกลาง | วางไฟล์ SQLite ไว้บน shared drive ของทีม + `PRAGMA journal_mode=WAL` + `busy_timeout` + retry logic สำหรับทีมเล็ก (2-5 คน) |
-| ระบบล็อกอิน | Admin สร้างบัญชี username/password ให้สมาชิก, แบ่ง Role (Admin/Member), บันทึกผู้ใช้ใน history log อัตโนมัติ |
-| พิจารณาเปลี่ยนเป็น Web App | ศึกษาความเป็นไปได้ในการ migrate จาก Desktop → Web โดยใช้ Flet Web หรือเปลี่ยน framework |
+## Phase 12 — UX Polish & Diary PDF Export ✅ (17 มี.ค. 2569)
+
+### Session: 17 มีนาคม 2569
+
+#### Feature — Subtask Progress Indicator (#2)
+- **ไฟล์:** `app/views/task_view.py`
+- แสดง `X/Y` พร้อม icon `CHECKLIST` บน task card แถวที่สอง (ข้างวันครบกำหนด)
+- กรอง `is_deleted` subtasks ออกก่อนนับ
+- สีเขียว (`COLOR_DONE`) เมื่อทำครบทุก subtask, สีเทา (`TEXT_SEC`) กรณีอื่น
+
+#### Feature — Sort Filter Chips (#3)
+- **ไฟล์:** `app/views/task_view.py`
+- เพิ่ม Sort options: สร้างล่าสุด / เก่าสุด / ครบกำหนด / Priority / ชื่อ
+- ใช้ filter chip แบบเดียวกับ Status/Priority (UX สม่ำเสมอ — ไม่ใช้ Dropdown)
+- Sort logic ใน `_filtered_tasks()` รองรับ `datetime.max` fallback สำหรับงานไม่มีวันครบกำหนด
+
+#### Feature — Collapsible Sidebar (#6)
+- **ไฟล์:** `app/views/main_layout.py`
+- Toggle button (`‹`/`›`) ย่อ/ขยาย sidebar
+- Collapsed width=60px, padding=4px — toggle button ยังคลิกได้
+- ซ่อน/แสดง label text ทุก nav item + settings
+- Nav icon จัด center เมื่อ collapsed
+
+#### Feature — Overdue Notification Badge (#8)
+- **ไฟล์:** `app/views/main_layout.py`
+- Badge แดงแสดงจำนวนงานเกินกำหนดบน nav item "งาน"
+- อัปเดตอัตโนมัติทุกครั้งที่ navigate หรือ expand sidebar
+
+#### Fix — Diary Export filename basename (#16)
+- **ไฟล์:** `app/views/diary_view.py`
+- แสดงเฉพาะชื่อไฟล์ใน status text (`os.path.basename(filepath)`) แทน full path
+
+#### Feature — Diary Export PDF (#16 new)
+- **ไฟล์:** `app/services/diary_service.py`, `app/views/diary_view.py`
+- เพิ่ม `DiaryService.export_to_pdf()` ใช้ reportlab + Thai font (Tahoma) เหมือน Summary export
+- สไตล์ Blue-White theme: title สีน้ำเงิน `#2563EB`, date header พื้นหลัง `#EFF6FF`, divider `#CBD5E1`
+- **Concept เดียวกัน** ทั้ง Word และ PDF:
+  - ปุ่มสไตล์เดียวกัน (`ElevatedButton` + icon + สีต่าง)
+  - `_do_export()` helper รวม logic: เรียก service → แสดง status basename → auto-open ไฟล์
+  - บันทึกลง `data/job_diary.docx` / `data/job_diary.pdf`
+- Layout ปุ่ม: บันทึก + ล้างข้อความ (แถว 1) / Export Word + Export PDF (แถว 2)
+
+#### UX — App Rename TaskFlow → VindFlow
+- **ไฟล์:** `main.py`, `app/views/main_layout.py`
+- เปลี่ยนชื่อแอปเป็น VindFlow ทั้ง title bar และ sidebar logo
+
+#### UX — Filter Bar Layout Restructure
+- **ไฟล์:** `app/views/task_view.py`
+- จัดเรียง filter bar เป็น 2 แถว ใน `ft.Column`:
+  - แถว 1: Status filter chips
+  - แถว 2: Priority filter chips + Sort filter chips
+- แก้ปัญหา chips ตกบรรทัดเมื่อหน้าต่างไม่เต็มจอ
+
+#### Bug Fix — Windows asyncio ConnectionResetError on close
+- **ไฟล์:** `main.py`
+- Monkey-patch `_ProactorBasePipeTransport._call_connection_lost` ที่ class level
+- กำจัด `[WinError 10054]` ใน console เมื่อปิดแอป โดยไม่กระทบการทำงาน
+
+---
+
+---
+
+## Phase 13 — UX/UI Professional Polish + Dashboard Charts + Time Tracking ✅ (17 มี.ค. 2569)
+
+### Part A — UX/UI Polish
+- **A1** Priority color border ซ้ายการ์ด task (มีอยู่แล้ว, confirm)
+- **A2** Hover reveal: ปุ่ม Edit/Delete ซ่อนโดย default, แสดงเมื่อ hover บนการ์ด (`on_hover`)
+- **A3** Done/Cancelled visual: opacity 0.55 + title color TEXT_SEC (Flet 0.82 ไม่รองรับ `TextDecoration`)
+- **A4** "ล้างตัวกรอง" button ปรากฏอัตโนมัติเมื่อมี filter ที่ active อยู่
+- **A5** Smart empty state: แยก "ไม่มีงาน" กับ "ไม่พบงานที่ตรงกับเงื่อนไข" (+ ปุ่ม clear)
+- **A6** Form dialog แบ่งเป็น 2 section (ข้อมูลหลัก / รายละเอียดเพิ่มเติม) พร้อม section header icon
+
+### Part B — Dashboard Charts
+- ย้าย Dashboard view จาก `main_layout.py` → `app/views/dashboard_view.py`
+- Stat cards รูปแบบใหม่พร้อม icon badge
+- **B1** Status Donut chart (matplotlib → PNG file → `ft.Image`)
+- **B2** Priority Horizontal Bar chart
+- **B3** Weekly Trend Line (7 วัน สร้าง vs เสร็จ, fill_between area)
+- **B4** Team Workload Bar (งานที่ยังไม่เสร็จต่อสมาชิก, color gradient)
+- Thai font auto-detection สำหรับ chart labels (Tahoma / Leelawadee)
+- Charts saved as PNG files ใน `data/charts/` (Flet desktop ไม่รองรับ data-URI ใน Image.src)
+- Professional light theme: white background, consistent figsize, balanced 2-column grid layout
+- Stat cards `expand=True` กระจายเต็มแถว
+
+### Part C — Time Tracking
+- **C1** `TimeLog` model (`app/models/time_log.py`) + SQLite auto-migration
+- **C2** `TimeTrackingService` (`app/services/time_tracking_service.py`): start/stop timer, manual log, query, summary by task/member
+- **C3** Timer UI บน Task Detail Panel: ▶ Start / ⏹ Stop button, recent logs list, manual log input
+- **C4** Time report ใน Summary View: ตาราง "เวลาต่องาน" และ "เวลาต่อสมาชิก"
+
+### ไฟล์ที่แก้ไข/สร้างใหม่
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|--------------|
+| `app/views/task_view.py` | A2–A6, C3 Timer UI |
+| `app/views/dashboard_view.py` | **NEW** — Dashboard + 4 charts |
+| `app/views/main_layout.py` | ย้าย dashboard view ออก, import จาก dashboard_view |
+| `app/views/summary_view.py` | C4 Time report section |
+| `app/models/time_log.py` | **NEW** — TimeLog model |
+| `app/models/task.py` | เพิ่ม time_logs relationship |
+| `app/services/time_tracking_service.py` | **NEW** — TimeTrackingService |
+| `app/database.py` | register time_log model |
+
+---
+
+---
+
+## Phase 14 — Architecture Review & Code Quality Improvements ✅ (17 มี.ค. 2569)
+
+### Session: 17 มีนาคม 2569
+
+#### Arch#1 — Fresh DB Session Per Navigation
+- **ไฟล์:** `app/views/main_layout.py`
+- ย้าย `db = SessionLocal()` จาก module-level ใน `build_main_layout()` → สร้างใหม่ภายใน `get_view()` ทุกครั้งที่ navigate
+- `_refresh_task_badge()` ใช้ `badge_db = SessionLocal()` แยกต่างหากพร้อม `try/finally: badge_db.close()`
+- **เหตุผล:** Session เดิมค้างตลอด lifetime ของแอป → identity map โป่ง → ข้อมูลไม่ fresh เมื่อ navigate กลับมาหน้าเดิม
+
+#### Arch#3 — Service Layer Validation
+- **ไฟล์:** `app/services/task_service.py`, `app/utils/exceptions.py`
+- เพิ่ม `_validate_task_input(title, start_date, due_date)` ใน `TaskService`:
+  - title ว่างหรือ whitespace → raise `ValidationError("ชื่องานต้องไม่ว่าง")`
+  - `start_date > due_date` → raise `ValidationError("วันเริ่มต้องไม่อยู่หลังวันครบกำหนด")`
+- เรียกใช้ใน `create_task()` และ `update_task()` (ก่อน dependency check)
+- Fix: `change_status()` ส่ง `.value` ของ enum เข้า `_log()` แทน enum object โดยตรง
+- `ValidationError.__init__(message)` เพิ่ม body (เดิมเป็น `pass`)
+
+#### Arch#4 — Replace `datetime.utcnow` ด้วย timezone-aware
+- **ไฟล์:** models × 6, services × 2, repositories × 1, utils × 1, views × 1
+- แทนที่ `datetime.utcnow` / `datetime.utcnow()` ทุกจุดด้วย `lambda: datetime.now(timezone.utc).replace(tzinfo=None)` (model defaults) และ `datetime.now(timezone.utc).replace(tzinfo=None)` (runtime calls)
+- เพิ่ม `from datetime import datetime, timezone` ในทุกไฟล์ที่แก้
+- **เหตุผล:** `datetime.utcnow()` deprecated ใน Python 3.12+
+
+#### Arch#5 — Dashboard Stats ใช้ SQL COUNT
+- **ไฟล์:** `app/services/task_service.py`
+- เขียน `get_dashboard_stats()` ใหม่ทั้งหมด: ใช้ `func.count(Task.id)` + filter per-status แทนการโหลด task ทั้งหมดเข้า memory แล้วนับใน Python loop
+- เพิ่ม `from sqlalchemy import func` ใน imports
+- **เหตุผล:** เดิมโหลด N rows เพื่อนับ 5 ตัวเลข — O(N) memory → O(1) memory
+
+#### Arch#9 — Test Coverage (27 → 103 tests)
+- **ไฟล์ใหม่:**
+
+| ไฟล์ | Tests | ครอบคลุม |
+|---|---|---|
+| `tests/test_team_service.py` | 23 | สร้าง/ลบ/อัปเดตทีม, เพิ่ม/ลบ/delete member, workload, toggle active, duplicate guard |
+| `tests/test_time_tracking_service.py` | 24 | start/stop timer, concurrent guard, manual log, total minutes, summary by member/task |
+| `tests/test_task_repository.py` | 24 | soft-delete, restore, overdue, dependency chain, subtask CRUD, validation edge cases |
+
+- อัปเดต `conftest.py` เพิ่ม `time_log` model ใน `Base.metadata`
+- **ผลลัพธ์:** 103/103 passed ใน 1.61s
+
+#### Arch#10 — เพิ่ม matplotlib ใน requirements.txt
+- **ไฟล์:** `requirements.txt`
+- เพิ่ม `matplotlib>=3.7.0` ภายใต้ section `# Charts (dashboard)`
+
+#### UX#1 — Quick-Add Inline Bar
+- **ไฟล์:** `app/views/task_view.py`
+- เพิ่ม `quick_add_bar` ระหว่าง filter section และ task list
+- TextField + IconButton: พิมพ์ชื่องานแล้วกด Enter หรือกดปุ่ม `+` → สร้างงานทันที (Medium priority, ไม่ต้องเปิด dialog)
+- เรียก `task_svc.create_task(title=title)` → `_refresh_tasks()` → `show_snack()`
+
+#### UX#4 — Recycle Bin (กู้คืนงานที่ถูกลบ)
+- **ไฟล์:** `app/views/task_view.py`
+- เพิ่ม "แสดงงานที่ถูกลบ" toggle button ท้าย task list
+- คลิก → แสดง/ซ่อน `trash_body` ที่แสดงรายการ soft-deleted tasks พร้อมปุ่ม "กู้คืน"
+- กู้คืน → เรียก `task_svc.restore_task(id)` → refresh ทั้ง deleted list และ task list
+
+#### UX#5 — Loading Indicator บน Dashboard Charts
+- **ไฟล์:** `app/views/dashboard_view.py`
+- แทนที่การ render charts แบบ synchronous → ใช้ `threading.Thread(daemon=True)`
+- แสดง `ft.ProgressRing` spinner ใน placeholder ของ chart card ทุกใบระหว่างรอ
+- เมื่อ chart พร้อม → `_replace_chart_placeholder()` swap content และ update UI
+- **Bug Fix:** `_chart_team_workload` รับ `workload_counter: dict` แทน task objects — ป้องกัน SQLAlchemy detached instance error ใน background thread (lazy-load `task.assignee` หลัง session หมดอายุ)
+
+### ไฟล์ที่แก้ไข
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|--------------|
+| `app/views/main_layout.py` | Fresh session per navigation, badge session cleanup |
+| `app/views/task_view.py` | Quick-add bar, Recycle Bin section |
+| `app/views/dashboard_view.py` | Loading spinner, background thread, workload pre-collect |
+| `app/services/task_service.py` | Validation, SQL COUNT stats, enum `.value` fix |
+| `app/utils/exceptions.py` | `ValidationError.__init__` body |
+| `app/models/task.py` | `timezone.utc` defaults |
+| `app/models/user.py` | `timezone.utc` defaults |
+| `app/models/team.py` | `timezone.utc` defaults |
+| `app/models/history.py` | `timezone.utc` defaults |
+| `app/models/diary.py` | `timezone.utc` defaults |
+| `app/models/time_log.py` | `timezone.utc` defaults |
+| `app/repositories/task_repo.py` | `timezone.utc` runtime calls |
+| `app/services/time_tracking_service.py` | `timezone.utc` runtime calls |
+| `app/utils/date_helpers.py` | `timezone.utc` runtime call |
+| `app/views/history_view.py` | `timezone.utc` runtime call |
+| `requirements.txt` | เพิ่ม `matplotlib>=3.7.0` |
+| `tests/conftest.py` | เพิ่ม `time_log` model import |
+| `tests/test_team_service.py` | **NEW** 23 tests |
+| `tests/test_time_tracking_service.py` | **NEW** 24 tests |
+| `tests/test_task_repository.py` | **NEW** 24 tests |
+
+---
+
+---
+
+## Phase 15 — Code Review Improvements: 4 Batches ✅ (18 มี.ค. 2569)
+
+### Batch 1 — Foundation
+
+#### Arch — Fix Session Leak Per Navigation (B1-T1)
+- **ไฟล์:** `app/views/main_layout.py`
+- เพิ่ม `_active_db` dict — track และ close session เก่าก่อนสร้างใหม่ทุกครั้ง navigate
+
+#### Refactor — Centralize Date Parsing (B1-T2)
+- **ไฟล์:** `app/utils/date_helpers.py` + 3 views
+- เพิ่ม `parse_date_input()` (→ datetime, raises) และ `parse_date_field()` (→ date, รองรับ BE, ไม่ raise)
+- ลบ `_parse_date()` / `_parse_date_field()` ที่ซ้ำกัน 3 ไฟล์
+
+#### Refactor — Magic String Constants (B1-T3)
+- **ไฟล์:** `app/views/task_view.py`
+- `ALL_FILTER`, `NO_SELECTION`, `DEFAULT_PRIORITY` แทน hardcoded strings ทุกจุด
+
+### Batch 2 — Performance & Architecture
+
+#### Performance — Fix N+1 Query ใน TimeTrackingService (B2-T1)
+- **ไฟล์:** `app/services/time_tracking_service.py`
+- เพิ่ม `joinedload(TimeLog.user)` และ `joinedload(TimeLog.task)` ลด query จาก N+1 → 1
+
+#### Architecture — ย้าย Dropdown Logic เข้า Service (B2-T2)
+- **ไฟล์:** `app/services/team_service.py`, `app/services/task_service.py`, `app/views/task_view.py`
+- `TeamService.get_members_for_dropdown()`, `TaskService.get_tasks_for_depends_dropdown()`
+- View ไม่ข้าม service เพื่อเรียก repository โดยตรงอีกต่อไป
+
+#### Fix — Typed Exception Handling (B2-T3)
+- **ไฟล์:** `app/views/task_view.py`
+- แยก catch: `ValidationError/CircularDependency` → dialog error, `NotFoundError` → snack, `Exception` → log
+
+#### Fix — Dashboard Background Thread Safety (B2-T4)
+- **ไฟล์:** `app/views/dashboard_view.py`
+- Pre-collect `priority_counts` + `trend_created`/`trend_done` ใน main thread ก่อน spawn background thread
+- ทุก chart function รับ plain dict/list แทน ORM objects — ป้องกัน DetachedInstanceError
+
+### Batch 3 — Database & Type Safety
+
+#### Performance — DB Indexes บน FK Columns (B3-T1)
+- **ไฟล์:** `app/models/task.py`, `app/models/time_log.py`, `app/models/user.py`, `app/database.py`
+- `index=True` บน FK columns ที่ filter บ่อย + `CREATE INDEX IF NOT EXISTS` migrations
+
+#### Type Safety — TypedDict (B3-T2)
+- **ไฟล์:** `app/services/time_tracking_service.py`, `app/services/task_service.py`
+- `MemberSummary`, `TaskTimeSummary`, `DashboardStats` TypedDict แทน bare `Dict`
+
+### Batch 4 — UX & Documentation
+
+#### UX — Loading Indicator + safe_page_update (B4-T1, B4-T3)
+- **ไฟล์:** `app/utils/ui_helpers.py`, `app/views/task_view.py`
+- เพิ่ม `safe_page_update(page)` helper ใน ui_helpers
+- `_filter_loading` Row (ProgressRing) แสดงขณะ filter/sort tasks
+- แทนที่ `try: page.update() except Exception: logger.warning(...)` pattern 5+ จุดด้วย `safe_page_update`
+
+#### Documentation — Docstrings (B4-T2)
+- **ไฟล์:** `app/services/task_service.py`
+- เพิ่ม docstrings ใน `create_task()`, `update_task()`, `change_status()`, `assign_task()`
+
+### ผลลัพธ์
+- **Tests:** 103/103 passed ✅
+- **ไฟล์ที่แก้ไข:** 15 ไฟล์
+
+---
+
+### Roadmap ถัดไป
+
+| Phase | หัวข้อ | สถานะ |
+|-------|--------|-------|
+| **Phase 16** | เลือกไฟล์ Database จากไดร์ฟกลาง (Shared SQLite + WAL + retry) | 🔜 Planned |
+| **Phase 17** | ระบบล็อกอิน (Admin สร้างบัญชี / Member login) | 🔜 Planned |
+| **Phase 18** | พิจารณา Web App Migration (Flet Web / FastAPI + React) | 🔜 Planned |

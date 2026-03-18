@@ -46,15 +46,26 @@ def get_db():
 def init_db() -> None:
     """Create all tables if they do not exist yet."""
     # Import models so SQLAlchemy registers them before create_all
-    from app.models import user, team, task, history, diary  # noqa: F401
+    from app.models import user, team, task, history, diary, time_log  # noqa: F401
     Base.metadata.create_all(bind=engine)
     # Add is_deleted columns to existing databases that predate these migrations
     from sqlalchemy import text
     _migrations = [
+        # Column additions (idempotent — try/except each)
         "ALTER TABLE tasks    ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE subtasks ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE users    ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE teams    ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0",
+        # Indexes on high-frequency filter columns (CREATE IF NOT EXISTS is safe on existing DBs)
+        "CREATE INDEX IF NOT EXISTS ix_tasks_assignee_id  ON tasks (assignee_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_team_id      ON tasks (team_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_depends_on   ON tasks (depends_on_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_is_deleted   ON tasks (is_deleted)",
+        "CREATE INDEX IF NOT EXISTS ix_time_logs_task_id  ON time_logs (task_id)",
+        "CREATE INDEX IF NOT EXISTS ix_time_logs_user_id  ON time_logs (user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_time_logs_running  ON time_logs (is_running)",
+        "CREATE INDEX IF NOT EXISTS ix_users_team_id      ON users (team_id)",
+        "CREATE INDEX IF NOT EXISTS ix_users_is_deleted   ON users (is_deleted)",
     ]
     for _sql in _migrations:
         try:

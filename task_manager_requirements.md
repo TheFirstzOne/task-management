@@ -87,6 +87,7 @@ Desktop application สำหรับจัดการงานและมอ
 | `openpyxl` | >= 3.1.0 | Export รายงานเป็น Excel (.xlsx) |
 | `reportlab` | >= 4.0.0 | Export รายงานเป็น PDF |
 | `python-docx` | >= 1.1.0 | Export บันทึกการทำงานเป็น Word (.docx) |
+| `matplotlib` | >= 3.7.0 | Dashboard charts (Donut, Bar, Line) |
 
 ### 4.3 Development Tools
 
@@ -111,7 +112,8 @@ task_manager/
 │   │   ├── team.py
 │   │   ├── task.py
 │   │   ├── history.py
-│   │   └── diary.py         # Phase 11: บันทึกการทำงานรายวัน
+│   │   ├── diary.py         # Phase 11: บันทึกการทำงานรายวัน
+│   │   └── time_log.py      # Phase 13: Time Tracking
 │   ├── repositories/        # Database CRUD operations
 │   │   ├── user_repo.py
 │   │   ├── team_repo.py
@@ -120,9 +122,11 @@ task_manager/
 │   ├── services/            # Business logic
 │   │   ├── team_service.py
 │   │   ├── task_service.py
-│   │   └── diary_service.py # Phase 11
+│   │   ├── diary_service.py # Phase 11
+│   │   └── time_tracking_service.py  # Phase 13: Timer + Manual log
 │   ├── views/               # Flet UI components
 │   │   ├── main_layout.py
+│   │   ├── dashboard_view.py # Phase 13: Charts + Stat cards
 │   │   ├── team_view.py
 │   │   ├── task_view.py
 │   │   ├── calendar_view.py
@@ -166,6 +170,7 @@ teams ──────┘         └──► work_history
 | `task_comments` | Comment/Note ต่องานแบบ timeline |
 | `work_history` | Action log ทุกการเปลี่ยนแปลง |
 | `diary_entries` | บันทึกการทำงานรายวัน (Phase 11) |
+| `time_logs` | บันทึกเวลาทำงานต่องาน (Phase 13) |
 
 ---
 
@@ -203,7 +208,44 @@ flet pack main.py --name "Task Manager"
 | **Phase 9** | Environment Recovery & UI Color Fix | ✅ Done |
 | **Phase 10** | Blue-White Theme | ✅ Done |
 | **Phase 11** | JobDiary Integration + Export PDF/Excel Blue-White Theme + Thai Font Fix | ✅ Done |
-| **Phase 12** | Code Quality & Architecture Hardening (BaseRepo, Exceptions, Logging, UI Helpers, Soft Delete, Tests) | ✅ Done |
-| **Phase 13** | เลือกไฟล์ Database จากไดร์ฟกลาง (Shared SQLite + WAL + retry) | 🔜 Planned |
-| **Phase 14** | ระบบล็อกอิน (Admin สร้างบัญชี / Member login) | 🔜 Planned |
-| **Phase 15** | พิจารณา Web App Migration (Flet Web / FastAPI + React) | 🔜 Planned |
+| **Phase 12** | Code Quality & Architecture Hardening + UX Polish + Diary PDF Export | ✅ Done |
+| **Phase 13** | UX/UI Professional Polish + Dashboard Charts + Time Tracking | ✅ Done |
+| **Phase 14** | Architecture Review & Code Quality (Session mgmt, Validation, UTC fix, SQL COUNT, Tests 103) | ✅ Done |
+| **Phase 15** | เลือกไฟล์ Database จากไดร์ฟกลาง (Shared SQLite + WAL + retry) | 🔜 Planned |
+| **Phase 16** | ระบบล็อกอิน (Admin สร้างบัญชี / Member login) | 🔜 Planned |
+| **Phase 17** | พิจารณา Web App Migration (Flet Web / FastAPI + React) | 🔜 Planned |
+
+---
+
+## Phase 13 — UX/UI Professional Polish + Dashboard Charts + Time Tracking (Planned)
+
+### Part A — UX/UI Polish (ทำก่อน)
+
+| # | รายการ | ความยาก | ไฟล์ที่เกี่ยวข้อง |
+|---|--------|---------|-----------------|
+| A1 | **Priority color border** บนซ้าย task card (Urgent=แดง, High=ส้ม, Medium=เหลือง, Low=เขียว) | ⭐ | `task_view.py` |
+| A2 | **Hover แสดง action buttons** (Edit/Delete ซ่อน แสดงเมื่อ hover บนการ์ด) | ⭐⭐ | `task_view.py` |
+| A3 | **Done/Cancelled visual** (opacity ลด + title strikethrough) | ⭐ | `task_view.py` |
+| A4 | **ปุ่ม "ล้างตัวกรอง"** (แสดงเมื่อ filter ≠ ทั้งหมด ทุกตัว) | ⭐ | `task_view.py` |
+| A5 | **Empty state เมื่อ filter ไม่พบผล** ("ไม่พบงานที่ตรงกับเงื่อนไข" + ปุ่ม clear) | ⭐ | `task_view.py` |
+| A6 | **Form dialog grouping** (แบ่ง 2 section: ข้อมูลหลัก / รายละเอียดเพิ่มเติม) | ⭐⭐ | `task_view.py` |
+
+### Part B — Dashboard Charts (#7)
+
+| # | รายการ | รายละเอียด |
+|---|--------|----------|
+| B1 | **Status Donut Chart** | งานแยกตามสถานะ (Pie/Donut) — ใช้ `flet_contrib` หรือ `matplotlib` render เป็น image |
+| B2 | **Priority Bar Chart** | งานแยกตาม Priority (Horizontal bar) |
+| B3 | **Weekly Trend Line** | งานที่สร้าง vs เสร็จรายสัปดาห์ (Line chart) |
+| B4 | **Team Workload Chart** | งานต่อทีม/สมาชิก (Stacked bar) |
+| เทคโนโลยี | **matplotlib → PNG → ft.Image** | render chart เป็น BytesIO buffer แสดงใน `ft.Image` — ไม่ต้องติดตั้ง lib เพิ่ม |
+
+### Part C — Time Tracking (#13)
+
+| # | รายการ | รายละเอียด |
+|---|--------|----------|
+| C1 | **Model** | เพิ่มตาราง `time_logs` (id, task_id, user_id, started_at, ended_at, duration_minutes, note) |
+| C2 | **Service** | `TimeTrackingService`: start/stop timer, manual log, get_logs_by_task, get_summary_by_member |
+| C3 | **UI บน Task Detail Panel** | Timer button (▶ Start / ⏹ Stop) + รายการ time logs ของงานนั้น |
+| C4 | **รายงาน Time** | ตารางสรุปเวลา/งาน/สมาชิก ในหน้า Summary (แยก tab หรือ section) |
+| C5 | **Export** | เพิ่ม time log ใน Excel/PDF ของ summary export |

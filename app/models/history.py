@@ -2,7 +2,7 @@
 WorkHistory model — Action log ทุกการเปลี่ยนแปลง
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -25,7 +25,7 @@ class WorkHistory(Base):
     old_value   = Column(Text, nullable=True)
     new_value   = Column(Text, nullable=True)
 
-    created_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
 
     # Relationships
     task  = relationship("Task", back_populates="history")

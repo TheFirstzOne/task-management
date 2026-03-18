@@ -3,7 +3,7 @@ User model — สมาชิกทีม
 """
 
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -26,10 +26,10 @@ class User(Base):
     role       = Column(Enum(UserRole), nullable=False, default=UserRole.TECHNICIAN)
     skills     = Column(String(255), nullable=True)          # comma-separated tags
     is_active  = Column(Boolean, default=True, nullable=False)
-    is_deleted = Column(Boolean, default=False, nullable=False, server_default="0")
-    team_id    = Column(Integer, ForeignKey("teams.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="0", index=True)
+    team_id    = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     # Relationships
     team             = relationship("Team", back_populates="members")

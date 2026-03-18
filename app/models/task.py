@@ -3,7 +3,7 @@ Task model — งาน, sub-tasks, comments
 """
 
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean,
     DateTime, Enum, ForeignKey
@@ -40,14 +40,14 @@ class Task(Base):
     due_date       = Column(DateTime, nullable=True)
 
     # FK
-    team_id        = Column(Integer, ForeignKey("teams.id"), nullable=True)
-    assignee_id    = Column(Integer, ForeignKey("users.id"), nullable=True)
+    team_id        = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
+    assignee_id    = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_by_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
-    depends_on_id  = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    depends_on_id  = Column(Integer, ForeignKey("tasks.id"), nullable=True, index=True)
 
-    created_at     = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    is_deleted     = Column(Boolean, default=False, nullable=False, server_default="0")
+    created_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    updated_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    is_deleted     = Column(Boolean, default=False, nullable=False, server_default="0", index=True)
 
     # Relationships
     team        = relationship("Team", back_populates="tasks")
@@ -59,6 +59,8 @@ class Task(Base):
                                order_by="TaskComment.created_at")
     history     = relationship("WorkHistory", back_populates="task", cascade="all, delete-orphan",
                                order_by="WorkHistory.created_at")
+    time_logs   = relationship("TimeLog",     back_populates="task", cascade="all, delete-orphan",
+                               order_by="TimeLog.started_at")
 
     def __repr__(self) -> str:
         return f"<Task id={self.id} title={self.title!r} status={self.status}>"
@@ -72,7 +74,7 @@ class SubTask(Base):
     title      = Column(String(200), nullable=False)
     is_done    = Column(Boolean, default=False, nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="0")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
 
     # Relationships
     task = relationship("Task", back_populates="subtasks")
@@ -88,7 +90,7 @@ class TaskComment(Base):
     task_id    = Column(Integer, ForeignKey("tasks.id"), nullable=False)
     author_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
     body       = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
 
     # Relationships
     task   = relationship("Task", back_populates="comments")

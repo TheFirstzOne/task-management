@@ -13,7 +13,7 @@ def test_not_found_error_message():
     assert "Task" in str(e)
     assert "42" in str(e)
     assert e.entity == "Task"
-    assert e.id == 42
+    assert e.entity_id == 42
 
 
 def test_duplicate_name_error_message():

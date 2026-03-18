@@ -14,7 +14,7 @@ Flet 0.80.x — function-based
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 import flet as ft
@@ -31,6 +31,7 @@ from app.utils.theme import (
     COLOR_IN_PROGRESS, COLOR_REVIEW, COLOR_CANCELLED,
 )
 
+from app.utils.date_helpers import parse_date_field
 from app.utils.logger import get_logger
 from app.utils.ui_helpers import show_snack, safe_update
 logger = get_logger(__name__)
@@ -65,7 +66,7 @@ def _relative_time(dt: datetime) -> str:
     """Return human-readable relative time string."""
     if not dt:
         return ""
-    delta = datetime.utcnow() - dt
+    delta = datetime.now(timezone.utc).replace(tzinfo=None) - dt
     secs  = int(delta.total_seconds())
     if secs < 60:
         return "เมื่อกี้"
@@ -109,22 +110,6 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
             .order_by(WorkHistory.created_at.desc())
             .all()
         )
-
-    def _parse_date_field(val: str) -> Optional[date]:
-        val = val.strip()
-        if not val:
-            return None
-        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
-            try:
-                return datetime.strptime(val, fmt).date()
-            except ValueError:
-                continue
-        try:
-            d, m, y_be = val.split("/")
-            return date(int(y_be) - 543, int(m), int(d))
-        except Exception as e:
-            logger.warning("load failed: %s", e, exc_info=True)
-            return None
 
     def _filter(entries: List[WorkHistory]) -> List[WorkHistory]:
         kw       = state["search"].lower().strip()
@@ -347,8 +332,8 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
         _rebuild()
 
     def _apply_dates():
-        state["date_from"]  = _parse_date_field(tf_from.value or "")
-        state["date_to"]    = _parse_date_field(tf_to.value or "")
+        state["date_from"]  = parse_date_field(tf_from.value or "")
+        state["date_to"]    = parse_date_field(tf_to.value or "")
         state["page_num"]   = 0
         _rebuild()
 
