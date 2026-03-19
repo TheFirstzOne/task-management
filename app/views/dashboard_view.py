@@ -35,6 +35,23 @@ _FIG_W    = 5.2    # all charts same width
 _FIG_H    = 3.0    # all charts same height
 _IMG_H    = 240    # rendered Image height in Flet
 
+# ── Chart cache — skip re-render if data unchanged ───────────────────────────
+_CACHE_KEY: dict = {"value": None}   # module-level: persists across navigations
+_MATPLOTLIB_LOCK = threading.Lock()  # protect global pyplot state (Agg is not 100% thread-safe)
+
+
+def _make_cache_key(stats: dict, priority_counts: dict, workload_counter: dict) -> tuple:
+    """Hashable signature of chart inputs + today's date (trend changes per day)."""
+    return (
+        stats.get("total", 0), stats.get("pending", 0),
+        stats.get("in_progress", 0), stats.get("review", 0),
+        stats.get("done", 0), stats.get("cancelled", 0),
+        stats.get("overdue", 0),
+        tuple(sorted(priority_counts.items())),
+        tuple(sorted(workload_counter.items())),
+        datetime.now().date(),
+    )
+
 # ── Palette — matches light UI theme ─────────────────────────────────────────
 _TEXT_DARK  = "#1E293B"
 _TEXT_MID   = "#64748B"
@@ -87,10 +104,23 @@ def _tfp():
 def _render_chart(fig, name: str) -> str:
     """Figure → PNG file path. Flet Image.src uses this path."""
     path = os.path.join(_CHART_DIR, f"{name}.png")
-    fig.savefig(path, format="png", bbox_inches="tight",
-                facecolor="#FFFFFF", dpi=120)
-    plt.close(fig)
+    with _MATPLOTLIB_LOCK:
+        fig.savefig(path, format="png", bbox_inches="tight",
+                    facecolor="#FFFFFF", dpi=120)
+        plt.close(fig)
     return path
+
+
+def _chart_path(name: str) -> str:
+    return os.path.join(_CHART_DIR, f"{name}.png")
+
+
+def _cached_image(name: str) -> ft.Control | None:
+    """Return ft.Image if PNG already exists on disk (stale-but-instant display)."""
+    path = _chart_path(name)
+    if os.path.exists(path):
+        return ft.Image(src=path, height=_IMG_H, fit="contain")
+    return None
 
 
 def _ax_light(ax):
@@ -386,7 +416,7 @@ def _build_dashboard_inner(db: Session, navigate_fn=None) -> ft.Control:
     workload_counter = dict(_wl_counter)
 
     # For _chart_priority_bar — snapshot priority counts
-    priority_counts = dict(_Counter(t.priority.value for t in tasks))
+    priority_counts = dict(_Counter(t.priority.value for t in tasks if t.status not in (TaskStatus.DONE, TaskStatus.CANCELLED)))
 
     # For _chart_weekly_trend — snapshot dates and statuses
     trend_created = [(t.created_at, ) for t in tasks if t.created_at]
@@ -412,11 +442,23 @@ def _build_dashboard_inner(db: Session, navigate_fn=None) -> ft.Control:
             ),
         )
 
-    # Four placeholder containers — replaced when charts finish
-    ph_donut    = _loading_placeholder()
-    ph_prio     = _loading_placeholder()
-    ph_trend    = _loading_placeholder()
-    ph_workload = _loading_placeholder()
+    # ── Cache check ───────────────────────────────────────────────────────────
+    current_key = _make_cache_key(stats, priority_counts, workload_counter)
+    data_unchanged = (current_key == _CACHE_KEY["value"])
+
+    # ── Placeholder: show stale PNG instantly if it exists, else spinner ──────
+    def _init_placeholder(chart_name: str) -> ft.Container:
+        cached = _cached_image(chart_name)
+        if cached:
+            # Stale-but-instant: reuse existing PNG while new one renders
+            return ft.Container(expand=True, content=ft.Container(
+                content=cached, alignment=ft.alignment.Alignment(0, 0)))
+        return _loading_placeholder()
+
+    ph_donut    = _init_placeholder("status_donut")
+    ph_prio     = _init_placeholder("priority_bar")
+    ph_trend    = _init_placeholder("weekly_trend")
+    ph_workload = _init_placeholder("team_workload")
 
     chart_grid = ft.Column(
         controls=[
@@ -439,27 +481,46 @@ def _build_dashboard_inner(db: Session, navigate_fn=None) -> ft.Control:
             content=new_ctrl,
             alignment=ft.alignment.Alignment(0, 0),
         )
-        placeholder.height  = None   # let chart determine height
+        placeholder.height = None   # let chart determine height
         try:
             placeholder.update()
         except Exception:
             pass
 
+    def _render_one(placeholder: ft.Container, build_fn, is_cached: bool) -> None:
+        """Render one chart in its own thread. Skip if data unchanged and PNG exists."""
+        if is_cached:
+            return   # PNG on disk is already current — nothing to do
+        try:
+            ctrl = build_fn()
+        except Exception as err:
+            ctrl = ft.Text(f"Chart error: {err}", color="#EF4444", size=12)
+        _replace_chart_placeholder(placeholder, ctrl)
+
     def _render_charts_bg() -> None:
-        """Run in a background thread — renders all 4 charts then pushes updates.
-        Uses only pre-collected plain dicts/lists — no ORM objects or lazy-loads."""
+        """Parallel rendering: 4 threads, one per chart.
+        Uses only pre-collected plain dicts/lists — no ORM objects."""
         pairs = [
             (ph_donut,    lambda: _chart_status_donut(stats)),
             (ph_prio,     lambda: _chart_priority_bar(priority_counts)),
             (ph_trend,    lambda: _chart_weekly_trend(trend_created, trend_done)),
             (ph_workload, lambda: _chart_team_workload(workload_counter)),
         ]
-        for placeholder, build_fn in pairs:
-            try:
-                ctrl = build_fn()
-            except Exception as err:
-                ctrl = ft.Text(f"Chart error: {err}", color="#EF4444", size=12)
-            _replace_chart_placeholder(placeholder, ctrl)
+        threads = [
+            threading.Thread(
+                target=_render_one,
+                args=(ph, fn, data_unchanged),
+                daemon=True,
+            )
+            for ph, fn in pairs
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        # Update cache key only after all charts are successfully written
+        if not data_unchanged:
+            _CACHE_KEY["value"] = current_key
 
     threading.Thread(target=_render_charts_bg, daemon=True).start()
 

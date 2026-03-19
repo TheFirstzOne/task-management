@@ -23,7 +23,9 @@ class DashboardStats(TypedDict):
     total: int
     pending: int
     in_progress: int
+    review: int
     done: int
+    cancelled: int
     overdue: int
 
 
@@ -309,4 +311,5 @@ class TaskService:
             "overdue":     overdue,
             "pending":     _count_status(TaskStatus.PENDING),
             "in_progress": _count_status(TaskStatus.IN_PROGRESS),
+            "review":      _count_status(TaskStatus.REVIEW),
         }

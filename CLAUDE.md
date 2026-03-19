@@ -158,7 +158,7 @@ pytest tests/ -v
 pytest tests/ --cov=app --cov-report=term-missing
 ```
 
-**Current test count:** 139 tests, ทุกตัวผ่าน
+**Current test count:** 173 tests, ทุกตัวผ่าน
 
 ---
 
@@ -219,6 +219,11 @@ ft.Image(src="data:image/png;base64,...")
 
 **Background thread:** Charts render ใน daemon thread แยก ป้องกัน UI block
 **Pre-collect lazy-load data:** ดึงข้อมูล relationship (เช่น `task.assignee.name`) ก่อน spawn thread เพื่อป้องกัน SQLAlchemy detached instance error
+
+**Chart caching (module-level):** `_CACHE_KEY` เก็บ hash ของ input data ข้ามการ navigate — ถ้า data ไม่เปลี่ยน จะไม่ re-render matplotlib เลย (ประหยัด ~1.5s)
+**Parallel rendering:** 4 charts render ใน 4 threads พร้อมกัน (แทน sequential) — ครั้งแรกที่ต้อง render จะเร็วกว่า ~4x
+**Stale-but-instant display:** ถ้า PNG file อยู่บน disk แล้ว จะแสดงทันที (0ms) แทน spinner ขณะรอ re-render
+**`_MATPLOTLIB_LOCK`:** `threading.Lock()` ป้องกัน concurrent pyplot state corruption (Agg backend ไม่ thread-safe 100%)
 
 ### 5.5 Service Validation
 ใช้ custom exceptions จาก `app.utils.exceptions` — ไม่ throw bare `ValueError`/`Exception`
@@ -353,19 +358,34 @@ State จัดการผ่าน mutable dict หรือ list (`selected_t
 | SQLAlchemy lazy-load | ห้าม access relationship attribute หลัง session ปิด หรือใน background thread |
 | Windows asyncio | `main.py` มี monkey-patch `_ProactorBasePipeTransport` ป้องกัน `WinError 10054` เมื่อปิดแอป |
 | Thai font (charts) | `dashboard_view.py` auto-detect Tahoma/Leelawadee สำหรับ matplotlib |
+| matplotlib thread safety | Agg backend ไม่ thread-safe 100% — ใช้ `_MATPLOTLIB_LOCK` ก่อน `fig.savefig()` + `plt.close()` เสมอ |
+| Dashboard cache scope | `_CACHE_KEY` เป็น module-level (process-wide) — reset เองเมื่อ date เปลี่ยน หรือ data เปลี่ยน |
 
 ---
 
 ## 9. Testing
 
 ```bash
-pytest tests/ -v                          # รันทั้งหมด (139 tests)
+pytest tests/ -v                          # รันทั้งหมด (173 tests)
 pytest tests/test_task_service.py -v      # เฉพาะ file
 pytest tests/ -k "test_create" -v         # เฉพาะ test ที่ชื่อตรง
 ```
 
 **Fixture:** `conftest.py` ให้ `db` fixture เป็น in-memory SQLite สร้างใหม่ต่อ test function
 ห้าม mock database ใน tests — ใช้ real in-memory SQLite เท่านั้น
+
+| Test file | Tests | ครอบคลุม |
+|-----------|-------|---------|
+| `test_task_service.py` | 20 | TaskService core CRUD |
+| `test_task_service_phase16.py` | 36 | get_task_or_none, get_near_due_*, restore, repo methods |
+| `test_team_service.py` | 23 | TeamService, workload, delete_member |
+| `test_time_tracking_service.py` | 24 | start/stop timer, summary |
+| `test_task_repository.py` | 24 | TaskRepository direct queries |
+| `test_time_log_repository.py` | 16 | TimeLogRepository direct queries |
+| `test_dashboard_stats.py` | 8 | get_dashboard_stats() inc. review key |
+| `test_diary_service.py` | 7 | DiaryService |
+| `test_shortcut_registry.py` | 10 | register/dispatch/clear |
+| `test_exceptions.py` | 5 | Custom exception hierarchy |
 
 ---
 
