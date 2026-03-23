@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-TeamView — Phase 2: Team Management UI
+TeamView — Phase 21: Team Management UI (API-backed)
 Features:
   - Team cards list (create / edit / delete)
   - Member list per team (add / edit / remove / toggle active)
@@ -9,10 +9,7 @@ Flet 0.80.x  —  function-based, no UserControl
 """
 
 import flet as ft
-from sqlalchemy.orm import Session
 
-from app.services.team_service import TeamService
-from app.models.user import UserRole
 from app.utils.theme import (
     BG_DARK, BG_CARD, BG_INPUT,
     ACCENT, ACCENT2, TEXT_PRI, TEXT_SEC, BORDER,
@@ -23,7 +20,7 @@ from app.utils.ui_helpers import show_snack, safe_update
 logger = get_logger(__name__)
 
 # ── Role options ──────────────────────────────────────────────────────────────
-ROLE_OPTIONS = [r.value for r in UserRole]
+ROLE_OPTIONS = ["Engineer", "Technician", "Operator", "Manager", "Other"]
 
 # ── Workload colour thresholds ────────────────────────────────────────────────
 def _workload_color(count: int) -> str:
@@ -35,8 +32,7 @@ def _workload_color(count: int) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 #  MAIN ENTRY
 # ═════════════════════════════════════════════════════════════════════════════
-def build_team_view(db: Session, page: ft.Page) -> ft.Control:
-    svc = TeamService(db)
+def build_team_view(api, page: ft.Page) -> ft.Control:
 
     # ── Shared mutable refs ───────────────────────────────────────
     selected_team_id: dict = {"value": None}   # which team is expanded
@@ -88,9 +84,9 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
             return
         try:
             if _editing_team_id["value"]:
-                svc.update_team(_editing_team_id["value"], name=name, description=desc)
+                api.update_team(_editing_team_id["value"], name=name, description=desc)
             else:
-                svc.create_team(name, desc)
+                api.create_team(name, desc)
             _close_team_dialog()
             _refresh_teams()
         except ValueError as ex:
@@ -163,7 +159,7 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
     def _save_member(e):
         name   = (tf_mem_name.value or "").strip()
         skills = (tf_mem_skills.value or "").strip()
-        role   = UserRole(dd_mem_role.value)
+        role   = dd_mem_role.value or ROLE_OPTIONS[0]
         if not name:
             mem_dialog_err.value = "กรุณาใส่ชื่อสมาชิก"
             try:
@@ -173,12 +169,12 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
             return
         try:
             if _editing_member_id["value"]:
-                svc.user_repo.update(
+                api.update_member(
                     _editing_member_id["value"],
                     name=name, role=role, skills=skills,
                 )
             else:
-                svc.add_member(_mem_team_id["value"], name, role, skills)
+                api.add_member(_mem_team_id["value"], name, role, skills)
             _close_mem_dialog()
             _refresh_teams()
         except Exception as ex:
@@ -262,9 +258,9 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
 
     def _open_edit_team(team):
         team_dialog_title.value = "แก้ไขทีม"
-        _editing_team_id["value"] = team.id
-        tf_team_name.value = team.name
-        tf_team_desc.value = team.description or ""
+        _editing_team_id["value"] = team["id"]
+        tf_team_name.value = team["name"]
+        tf_team_desc.value = team.get("description") or ""
         team_dialog_err.value = ""
         team_dlg.open = True
         try:
@@ -274,15 +270,15 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
 
     def _open_delete_team(team):
         confirm_msg.value = (
-            f'ต้องการลบทีม "{team.name}" ใช่ไหม?\n'
+            f'ต้องการลบทีม "{team["name"]}" ใช่ไหม?\n'
             f'สมาชิกทุกคนจะถูก unassign ออกจากทีม (ยังคงอยู่ในระบบ)'
         )
         def _do():
             try:
-                svc.delete_team(team.id)
-                if selected_team_id["value"] == team.id:
+                api.delete_team(team["id"])
+                if selected_team_id["value"] == team["id"]:
                     selected_team_id["value"] = None
-                show_snack(page, f'ลบทีม "{team.name}" เรียบร้อย')
+                show_snack(page, f'ลบทีม "{team["name"]}" เรียบร้อย')
             except Exception as ex:
                 logger.error("delete team failed: %s", ex, exc_info=True)
                 show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
@@ -310,11 +306,11 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
 
     def _open_edit_member(member):
         mem_dialog_title.value = "แก้ไขสมาชิก"
-        _editing_member_id["value"] = member.id
-        _mem_team_id["value"] = member.team_id
-        tf_mem_name.value   = member.name
-        tf_mem_skills.value = member.skills or ""
-        dd_mem_role.value   = member.role.value
+        _editing_member_id["value"] = member["id"]
+        _mem_team_id["value"] = member.get("team_id")
+        tf_mem_name.value   = member["name"]
+        tf_mem_skills.value = member.get("skills") or ""
+        dd_mem_role.value   = member.get("role") or ROLE_OPTIONS[0]
         mem_dialog_err.value = ""
         mem_dlg.open = True
         try:
@@ -324,13 +320,13 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
 
     def _open_delete_member(member):
         confirm_msg.value = (
-            f'ต้องการลบ "{member.name}" ออกจากระบบใช่ไหม?\n'
+            f'ต้องการลบ "{member["name"]}" ออกจากระบบใช่ไหม?\n'
             f'งานที่ยังดำเนินอยู่จะถูก unassign โดยอัตโนมัติ'
         )
         def _do():
             try:
-                svc.delete_member(member.id)
-                show_snack(page, f'ลบสมาชิก "{member.name}" เรียบร้อย')
+                api.delete_member(member["id"])
+                show_snack(page, f'ลบสมาชิก "{member["name"]}" เรียบร้อย')
             except Exception as ex:
                 logger.error("delete member failed: %s", ex, exc_info=True)
                 show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
@@ -348,24 +344,27 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
     def _build_member_row(member, workload: int) -> ft.Container:
         bar_pct  = min(workload / 8, 1.0)
         bar_color = _workload_color(workload)
+        member_role = member.get("role") or "Other"
+        member_name = member["name"]
+        is_active = member.get("is_active", True)
 
         role_chip = ft.Container(
             padding=ft.padding.symmetric(horizontal=8, vertical=2),
             border_radius=20,
             bgcolor=ACCENT + "22",
-            content=ft.Text(member.role.value, size=11, color=ACCENT),
+            content=ft.Text(member_role, size=11, color=ACCENT),
         )
 
         active_icon = ft.IconButton(
-            icon=ft.Icons.TOGGLE_ON if member.is_active else ft.Icons.TOGGLE_OFF,
-            icon_color=ACCENT2 if member.is_active else TEXT_SEC,
+            icon=ft.Icons.TOGGLE_ON if is_active else ft.Icons.TOGGLE_OFF,
+            icon_color=ACCENT2 if is_active else TEXT_SEC,
             icon_size=22,
             tooltip="เปิด/ปิด Active",
-            on_click=lambda e, mid=member.id: _toggle_active(mid),
+            on_click=lambda e, mid=member["id"]: _toggle_active(mid),
         )
 
         skills_text = ft.Text(
-            member.skills or "—",
+            member.get("skills") or "—",
             size=11, color=TEXT_SEC,
             no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
         )
@@ -400,7 +399,7 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
                         width=36, height=36, border_radius=18,
                         bgcolor=ACCENT,
                         content=ft.Text(
-                            member.name[0].upper(),
+                            member_name[0].upper(),
                             size=14, weight=ft.FontWeight.BOLD,
                             color="#FFFFFF",
                             text_align=ft.TextAlign.CENTER,
@@ -412,7 +411,7 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
                         controls=[
                             ft.Row(
                                 controls=[
-                                    ft.Text(member.name, size=14,
+                                    ft.Text(member_name, size=14,
                                             weight=ft.FontWeight.W_500, color=TEXT_PRI),
                                     role_chip,
                                 ],
@@ -456,15 +455,15 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
     #  BUILD: team card
     # ═══════════════════════════════════════════════════════════════
     def _build_team_card(team) -> ft.Container:
-        members  = svc.user_repo.get_by_team(team.id)
-        workload = svc.get_workload(team.id)
-        active_c = sum(1 for m in members if m.is_active)
-        is_open  = selected_team_id["value"] == team.id
+        members  = team.get("members", [])
+        workload = api.get_workload(team["id"])
+        active_c = sum(1 for m in members if m.get("is_active", True))
+        is_open  = selected_team_id["value"] == team["id"]
 
         # ── Member rows (collapsible) ─────────────────────────────
         member_rows = ft.Column(
             controls=[
-                _build_member_row(m, workload.get(m.id, 0))
+                _build_member_row(m, workload.get(str(m["id"]), workload.get(m["id"], 0)))
                 for m in members
             ],
             spacing=6,
@@ -475,12 +474,12 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
             "+ เพิ่มสมาชิก",
             icon=ft.Icons.PERSON_ADD_ALT_1_OUTLINED,
             style=ft.ButtonStyle(color=ACCENT),
-            on_click=lambda e, tid=team.id: _open_add_member(tid),
+            on_click=lambda e, tid=team["id"]: _open_add_member(tid),
             visible=is_open,
         )
 
         # ── Header ───────────────────────────────────────────────
-        def _toggle_expand(e, tid=team.id):
+        def _toggle_expand(e, tid=team["id"]):
             if selected_team_id["value"] == tid:
                 selected_team_id["value"] = None
             else:
@@ -517,9 +516,9 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
                     ft.Icon(ft.Icons.GROUPS_2_OUTLINED, color=ACCENT, size=22),
                     ft.Column(
                         controls=[
-                            ft.Text(team.name, size=16,
+                            ft.Text(team["name"], size=16,
                                     weight=ft.FontWeight.BOLD, color=TEXT_PRI),
-                            ft.Text(team.description or "ไม่มีคำอธิบาย",
+                            ft.Text(team.get("description") or "ไม่มีคำอธิบาย",
                                     size=12, color=TEXT_SEC,
                                     no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
                         ],
@@ -591,11 +590,11 @@ def build_team_view(db: Session, page: ft.Page) -> ft.Control:
     #  ACTIONS
     # ═══════════════════════════════════════════════════════════════
     def _toggle_active(member_id: int):
-        svc.toggle_member_active(member_id)
+        api.toggle_member_active(member_id)
         _refresh_teams()
 
     def _refresh_teams():
-        teams = svc.get_all_teams()
+        teams = api.get_teams()
         team_cards_col.controls = [_build_team_card(t) for t in teams]
 
         # Empty state

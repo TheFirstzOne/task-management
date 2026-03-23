@@ -6,25 +6,28 @@ AccountView — Phase 19: User Profile & Account Settings
 from __future__ import annotations
 
 import flet as ft
-from sqlalchemy.orm import Session
 
-from app.repositories.user_repo import UserRepository
-from app.services.auth_service import AuthService
 from app.utils.exceptions import ValidationError
 from app.utils.ui_helpers import show_snack
 import app.utils.theme as theme
 
 
-def build_account_view(db: Session, page: ft.Page) -> ft.Control:
+def build_account_view(api, page: ft.Page) -> ft.Control:
     """Profile + password change page for the currently logged-in user."""
 
     # ── Current user from session ─────────────────────────────────
-    current   = page.session.store.get("current_user") or {}
-    user_id   = current.get("id")
-    auth_svc  = AuthService(db)
-    user_repo = UserRepository(db)
+    current = page.session.store.get("current_user") or {}
+    user_id = current.get("id")
 
-    user = user_repo.get_by_id(user_id) if user_id else None
+    # Load user via API
+    if user_id:
+        try:
+            all_users = api.get_users()
+            user = next((u for u in all_users if u["id"] == user_id), None)
+        except Exception:
+            user = None
+    else:
+        user = None
 
     if not user:
         return ft.Container(
@@ -39,17 +42,17 @@ def build_account_view(db: Session, page: ft.Page) -> ft.Control:
 
     # ── Profile display controls ──────────────────────────────────
     name_text = ft.Text(
-        user.name, size=18, weight=ft.FontWeight.BOLD, color=theme.TEXT_PRI,
+        user["name"], size=18, weight=ft.FontWeight.BOLD, color=theme.TEXT_PRI,
     )
     username_text = ft.Text(
-        f"@{user.username}" if user.username else "— ยังไม่มี username",
-        size=13, color=theme.ACCENT if user.username else theme.TEXT_DIM,
+        f"@{user.get('username')}" if user.get("username") else "— ยังไม่มี username",
+        size=13, color=theme.ACCENT if user.get("username") else theme.TEXT_DIM,
     )
     role_text = ft.Text(
-        user.role.value if user.role else "", size=13, color=theme.TEXT_SEC,
+        user.get("role", ""), size=13, color=theme.TEXT_SEC,
     )
     admin_badge = ft.Container(
-        visible=bool(user.is_admin),
+        visible=bool(user.get("is_admin", False)),
         padding=ft.padding.symmetric(horizontal=8, vertical=3),
         border_radius=12, bgcolor=theme.ACCENT + "22",
         content=ft.Text("Admin", size=11, color=theme.ACCENT,
@@ -74,7 +77,7 @@ def build_account_view(db: Session, page: ft.Page) -> ft.Control:
     def _show_edit_name(e=None):
         tf = ft.TextField(
             label="ชื่อ-นามสกุล",
-            value=user.name,
+            value=user["name"],
             border_radius=8,
             border_color=theme.BORDER,
             focused_border_color=theme.ACCENT,
@@ -90,14 +93,19 @@ def build_account_view(db: Session, page: ft.Page) -> ft.Control:
                 err.visible = True
                 page.update()
                 return
-            updated = user_repo.update(user_id, name=new_name)
-            if updated:
+            try:
+                api.update_user(user_id, name=new_name)
                 name_text.value = new_name
                 name_text.update()
                 # sync session store
                 cur = page.session.store.get("current_user") or {}
                 cur["name"] = new_name
                 page.session.store.set("current_user", cur)
+            except Exception as ex:
+                err.value = f"เกิดข้อผิดพลาด: {ex}"
+                err.visible = True
+                page.update()
+                return
             _close_dlg()
             show_snack(page, "อัปเดตชื่อสำเร็จ ✓")
 
@@ -169,7 +177,7 @@ def build_account_view(db: Session, page: ft.Page) -> ft.Control:
             page.update()
             return
         try:
-            auth_svc.change_password(user_id, old, new)
+            api.change_password(user_id, old, new)
             tf_old.value = tf_new.value = tf_conf.value = ""
             pwd_ok.value   = "เปลี่ยนรหัสผ่านสำเร็จ ✓"
             pwd_ok.visible = True
@@ -200,7 +208,7 @@ def build_account_view(db: Session, page: ft.Page) -> ft.Control:
                             bgcolor=theme.ACCENT + "22",
                             alignment=ft.Alignment(0, 0),
                             content=ft.Text(
-                                (user.name or "?")[0].upper(),
+                                (user.get("name") or "?")[0].upper(),
                                 size=26, weight=ft.FontWeight.BOLD,
                                 color=theme.ACCENT,
                             ),
@@ -234,7 +242,7 @@ def build_account_view(db: Session, page: ft.Page) -> ft.Control:
     )
 
     # ── Password card (only if user has login credentials) ────────
-    has_login = bool(user.username and user.password_hash)
+    has_login = bool(user.get("username"))
 
     password_card = ft.Container(
         bgcolor=theme.BG_CARD,

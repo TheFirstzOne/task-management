@@ -16,11 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 import flet as ft
-from sqlalchemy.orm import Session
 
-from app.services.task_service import TaskService
-from app.services.team_service import TeamService
-from app.models.task import Task, TaskStatus, TaskPriority
 from app.utils.theme import (
     BG_DARK, BG_CARD, BG_INPUT,
     ACCENT, ACCENT2, TEXT_PRI, TEXT_SEC, BORDER,
@@ -49,14 +45,15 @@ _PRIO_DOT = {
 }
 ALL_OPT = "ทั้งหมด"
 
+# Status value strings used for comparison (API returns plain strings)
+_STATUS_DONE      = "Done"
+_STATUS_CANCELLED = "Cancelled"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN ENTRY
 # ══════════════════════════════════════════════════════════════════════════════
-def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
-    task_svc = TaskService(db)
-    team_svc = TeamService(db)
-
+def build_calendar_view(api, page: ft.Page) -> ft.Control:
     today = date.today()
 
     # ── State ──────────────────────────────────────────────────────
@@ -82,23 +79,41 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
     )
 
     # ── Filter dropdowns ───────────────────────────────────────────
-    def _team_options():
-        teams = team_svc.get_all_teams()
-        return [ft.dropdown.Option(ALL_OPT)] + [
-            ft.dropdown.Option(key=str(t.id), text=t.name) for t in teams]
+    def _get_all_teams():
+        return api.get_teams()
 
-    def _member_options(team_key: str):
-        opts = [ft.dropdown.Option(ALL_OPT)]
+    def _get_active_members_for_team(team_key: str) -> list:
+        """Return active members for a specific team, or all active members."""
+        teams = _get_all_teams()
         if team_key and team_key != ALL_OPT:
             try:
                 tid = int(team_key)
-                members = team_svc.user_repo.get_by_team(tid, active_only=True)
-                opts += [ft.dropdown.Option(key=str(m.id), text=m.name) for m in members]
+                for team in teams:
+                    if team["id"] == tid:
+                        return [m for m in team.get("members", [])
+                                if m.get("is_active", True)]
             except (ValueError, TypeError):
                 pass
+            return []
         else:
-            for u in team_svc.user_repo.get_all(active_only=True):
-                opts.append(ft.dropdown.Option(key=str(u.id), text=u.name))
+            seen = {}
+            for team in teams:
+                for m in team.get("members", []):
+                    if m.get("is_active", True):
+                        mid = m.get("id")
+                        if mid is not None and mid not in seen:
+                            seen[mid] = m
+            return list(seen.values())
+
+    def _team_options():
+        teams = _get_all_teams()
+        return [ft.dropdown.Option(ALL_OPT)] + [
+            ft.dropdown.Option(key=str(t["id"]), text=t["name"]) for t in teams]
+
+    def _member_options(team_key: str):
+        opts = [ft.dropdown.Option(ALL_OPT)]
+        members = _get_active_members_for_team(team_key)
+        opts += [ft.dropdown.Option(key=str(m["id"]), text=m["name"]) for m in members]
         return opts
 
     dd_team = ft.Dropdown(
@@ -122,7 +137,8 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
     dd_status = ft.Dropdown(
         label="สถานะ", width=140,
         options=[ft.dropdown.Option(ALL_OPT)] + [
-            ft.dropdown.Option(s.value) for s in TaskStatus],
+            ft.dropdown.Option(s) for s in
+            ["Pending", "In Progress", "Review", "Done", "Cancelled"]],
         value=ALL_OPT,
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
@@ -133,7 +149,8 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
     dd_prio = ft.Dropdown(
         label="Priority", width=130,
         options=[ft.dropdown.Option(ALL_OPT)] + [
-            ft.dropdown.Option(p.value) for p in TaskPriority],
+            ft.dropdown.Option(p) for p in
+            ["Low", "Medium", "High", "Urgent"]],
         value=ALL_OPT,
         border_color=BORDER, focused_border_color=ACCENT,
         label_style=ft.TextStyle(color=TEXT_SEC),
@@ -160,8 +177,17 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
     # ══════════════════════════════════════════════════════════════
     #  DATA HELPERS
     # ══════════════════════════════════════════════════════════════
-    def _get_filtered_tasks() -> list[Task]:
-        tasks = task_svc.get_all_tasks()
+    def _parse_task_due(t: dict) -> Optional[date]:
+        raw = t.get("due_date")
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw).date()
+        except (ValueError, TypeError):
+            return None
+
+    def _get_filtered_tasks() -> list:
+        tasks = api.get_tasks()
         ft_team   = state["filter_team"]
         ft_member = state["filter_member"]
         ft_status = state["filter_status"]
@@ -170,46 +196,47 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
         if ft_team != ALL_OPT:
             try:
                 tid = int(ft_team)
-                tasks = [t for t in tasks
-                         if t.team_id == tid
-                         or (t.assignee and t.assignee.team_id == tid)]
+                tasks = [t for t in tasks if t.get("team_id") == tid]
             except (ValueError, TypeError):
                 pass
 
         if ft_member != ALL_OPT:
             try:
                 mid = int(ft_member)
-                tasks = [t for t in tasks if t.assignee_id == mid]
+                tasks = [t for t in tasks if t.get("assignee_id") == mid]
             except (ValueError, TypeError):
                 pass
 
         if ft_status != ALL_OPT:
-            tasks = [t for t in tasks if t.status.value == ft_status]
+            tasks = [t for t in tasks if t.get("status", "Pending") == ft_status]
         if ft_prio != ALL_OPT:
-            tasks = [t for t in tasks if t.priority.value == ft_prio]
+            tasks = [t for t in tasks if t.get("priority", "Medium") == ft_prio]
         return tasks
 
-    def _tasks_by_day(tasks: list[Task]) -> dict[date, list[Task]]:
+    def _tasks_by_day(tasks: list) -> dict:
         """Group tasks by their due_date day."""
-        by_day: dict[date, list[Task]] = {}
+        by_day: dict[date, list] = {}
         for t in tasks:
-            if t.due_date:
-                d = t.due_date.date()
+            d = _parse_task_due(t)
+            if d:
                 by_day.setdefault(d, []).append(t)
         return by_day
 
     # ══════════════════════════════════════════════════════════════
     #  DAY DETAIL PANEL
     # ══════════════════════════════════════════════════════════════
-    def _build_day_panel(d: date, tasks: list[Task]) -> ft.Column:
+    def _build_day_panel(d: date, tasks: list) -> ft.Column:
         title = ft.Text(
             f"{d.day} {THAI_MONTHS[d.month]} {d.year + 543}",
             size=16, weight=ft.FontWeight.BOLD, color=TEXT_PRI,
         )
 
-        def _task_card(t: Task) -> ft.Container:
-            sc = status_color(t.status.value)
-            pc = priority_color(t.priority.value)
+        def _task_card(t: dict) -> ft.Container:
+            t_status = t.get("status", "Pending")
+            t_prio   = t.get("priority", "Medium")
+            sc = status_color(t_status)
+            pc = priority_color(t_prio)
+            assignee_name = t.get("assignee_name") or "—"
             return ft.Container(
                 bgcolor=BG_INPUT,
                 border_radius=8,
@@ -217,7 +244,7 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
                 padding=ft.padding.symmetric(horizontal=10, vertical=8),
                 content=ft.Column(
                     controls=[
-                        ft.Text(t.title, size=13,
+                        ft.Text(t["title"], size=13,
                                 weight=ft.FontWeight.W_500, color=TEXT_PRI,
                                 no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
                         ft.Row(
@@ -226,10 +253,10 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
                                     padding=ft.padding.symmetric(horizontal=6, vertical=2),
                                     border_radius=10,
                                     bgcolor=sc + "22",
-                                    content=ft.Text(t.status.value, size=10, color=sc),
+                                    content=ft.Text(t_status, size=10, color=sc),
                                 ),
                                 ft.Text(
-                                    t.assignee.name if t.assignee else "—",
+                                    assignee_name,
                                     size=11, color=TEXT_SEC,
                                 ),
                             ],
@@ -280,15 +307,15 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
     # ══════════════════════════════════════════════════════════════
     #  CALENDAR GRID
     # ══════════════════════════════════════════════════════════════
-    def _build_day_cell(d: Optional[date], day_tasks: list[Task],
+    def _build_day_cell(d: Optional[date], day_tasks: list,
                         is_today: bool, is_selected: bool,
                         is_other_month: bool) -> ft.Container:
         if d is None:
             return ft.Container(expand=True)
 
         has_overdue = any(
-            t.due_date and t.due_date.date() < today
-            and t.status not in (TaskStatus.DONE, TaskStatus.CANCELLED)
+            _parse_task_due(t) and _parse_task_due(t) < today
+            and t.get("status") not in (_STATUS_DONE, _STATUS_CANCELLED)
             for t in day_tasks
         )
 
@@ -318,7 +345,7 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
             controls=[
                 ft.Container(
                     width=6, height=6, border_radius=3,
-                    bgcolor=_PRIO_DOT.get(t.priority.value, TEXT_SEC),
+                    bgcolor=_PRIO_DOT.get(t.get("priority", "Medium"), TEXT_SEC),
                 )
                 for t in day_tasks[:4]
             ],
@@ -334,7 +361,7 @@ def build_calendar_view(db: Session, page: ft.Page) -> ft.Control:
                 str(len(day_tasks)), size=9,
                 color=ACCENT, text_align=ft.TextAlign.CENTER,
             ),
-            alignment=ft.alignment.Alignment.CENTER,
+            alignment=ft.Alignment(0, 0),
         )
 
         return ft.Container(

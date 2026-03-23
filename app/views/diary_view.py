@@ -4,18 +4,15 @@ Function-based view compatible with Flet 0.80+ (no UserControl)
 """
 
 import os
+from datetime import datetime
 import flet as ft
-from app.services.diary_service import DiaryService
-from app.database import DATA_DIR
 import app.utils.theme as theme
 from app.utils.logger import get_logger
 from app.utils.ui_helpers import show_snack
 logger = get_logger(__name__)
 
 
-def build_diary_view(db, page: ft.Page) -> ft.Control:
-    svc = DiaryService(db)
-
+def build_diary_view(api, page: ft.Page) -> ft.Control:
     # ── State ────────────────────────────────────────────────────
     status_text = ft.Text("", size=13, color=theme.ACCENT)
 
@@ -41,7 +38,7 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
             status_text.color = theme.COLOR_OVERDUE
             page.update()
             return
-        svc.create_entry(text)
+        api.create_diary(text)
         diary_field.value = ""
         status_text.value = "บันทึกสำเร็จ!"
         status_text.color = theme.COLOR_DONE
@@ -52,10 +49,12 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
         status_text.value = ""
         page.update()
 
-    def _do_export(export_fn, filepath: str):
-        """Shared export logic: call service fn, show status, auto-open file."""
+    def _do_export_api(fmt: str, filepath: str):
+        """Shared export logic: call api, save to file, open with OS."""
         try:
-            export_fn(filepath)
+            data = api.export_diary(fmt)
+            with open(filepath, "wb") as f:
+                f.write(data)
             status_text.value = f"Export สำเร็จ: {os.path.basename(filepath)}"
             status_text.color = theme.COLOR_DONE
             page.update()
@@ -71,16 +70,10 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
             page.update()
 
     def export_word(e):
-        _do_export(
-            lambda fp: svc.export_to_word(fp),
-            os.path.join(DATA_DIR, "job_diary.docx"),
-        )
+        _do_export_api("word", os.path.join("data", "job_diary.docx"))
 
     def export_pdf(e):
-        _do_export(
-            lambda fp: svc.export_to_pdf(fp),
-            os.path.join(DATA_DIR, "job_diary.pdf"),
-        )
+        _do_export_api("pdf", os.path.join("data", "job_diary.pdf"))
 
     # ── Export button style (shared concept) ──────────────────────
     def _export_btn(label: str, icon, on_click, bgcolor: str) -> ft.ElevatedButton:
@@ -146,7 +139,11 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
             )
         )
         for entry in entries:
-            time_str = entry.created_at.strftime("%H:%M:%S")
+            created_at = (
+                datetime.fromisoformat(entry["created_at"])
+                if entry.get("created_at") else None
+            )
+            time_str = created_at.strftime("%H:%M:%S") if created_at else "—"
             card = ft.Container(
                 bgcolor=theme.BG_CARD,
                 border=ft.border.all(1, theme.BORDER),
@@ -162,7 +159,7 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
                             spacing=6,
                         ),
                         ft.Divider(height=1, color=theme.BORDER),
-                        ft.Text(entry.content, size=14, color=theme.TEXT_PRI, selectable=True),
+                        ft.Text(entry["content"], size=14, color=theme.TEXT_PRI, selectable=True),
                     ],
                     spacing=8,
                 ),
@@ -174,7 +171,7 @@ def build_diary_view(db, page: ft.Page) -> ft.Control:
         date_list.controls.clear()
         history_content.controls.clear()
 
-        grouped = svc.get_entries_grouped()
+        grouped = api.get_diary_grouped()
 
         if not grouped:
             history_content.controls.append(

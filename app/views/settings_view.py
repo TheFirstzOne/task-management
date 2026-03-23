@@ -10,24 +10,21 @@ Admin เท่านั้นที่เข้าถึงได้
 from __future__ import annotations
 
 import flet as ft
-from sqlalchemy.orm import Session
 
-from app.repositories.user_repo import UserRepository
-from app.services.auth_service import AuthService
-from app.models.user import User, UserRole
 from app.utils.exceptions import ValidationError, TaskFlowError
 from app.utils.ui_helpers import show_snack, confirm_dialog
 import app.utils.theme as theme
 
+# UserRole values — kept as plain strings to avoid ORM import
+_USER_ROLES = ["Technician", "Engineer", "CNC", "PLC", "Hydraulic", "Other"]
+_DEFAULT_ROLE = "Other"
 
-def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
+
+def build_settings_view(api, page: ft.Page) -> ft.Control:
     """Admin panel — user account management."""
 
-    user_repo = UserRepository(db)
-    auth_svc  = AuthService(db)
-
     # ── Current logged-in user from session ───────────────────────
-    current = page.session.store.get("current_user") or {}
+    current  = page.session.store.get("current_user") or {}
     is_admin = current.get("is_admin", False)
 
     # ── State ─────────────────────────────────────────────────────
@@ -47,18 +44,21 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
         page.update()
 
     def _refresh_list():
-        users = user_repo.get_all()
+        try:
+            users = api.get_users()
+        except Exception:
+            users = []
         user_list_col.controls.clear()
         for u in users:
             user_list_col.controls.append(_build_user_row(u))
         page.update()
 
     # ── User row card ─────────────────────────────────────────────
-    def _build_user_row(u: User) -> ft.Container:
-        has_login = bool(u.username)
+    def _build_user_row(u: dict) -> ft.Container:
+        has_login = bool(u.get("username"))
 
         admin_badge = ft.Container(
-            visible=bool(u.is_admin),
+            visible=bool(u.get("is_admin", False)),
             padding=ft.padding.symmetric(horizontal=6, vertical=2),
             border_radius=10,
             bgcolor=theme.ACCENT + "22",
@@ -66,7 +66,7 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
                             weight=ft.FontWeight.W_600),
         )
         inactive_badge = ft.Container(
-            visible=not u.is_active,
+            visible=not u.get("is_active", True),
             padding=ft.padding.symmetric(horizontal=6, vertical=2),
             border_radius=10,
             bgcolor="#F1F5F9",
@@ -74,7 +74,7 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
         )
 
         login_status = ft.Text(
-            f"@{u.username}" if has_login else "— ยังไม่มี username",
+            f"@{u.get('username')}" if has_login else "— ยังไม่มี username",
             size=12,
             color=theme.ACCENT if has_login else theme.TEXT_DIM,
         )
@@ -83,15 +83,15 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
         btn_set_cred = ft.TextButton(
             "กำหนด Login" if not has_login else "เปลี่ยนรหัส",
             style=ft.ButtonStyle(color=theme.ACCENT),
-            on_click=lambda e, uid=u.id, uname=u.username: _show_set_credential_dialog(uid, uname),
+            on_click=lambda e, uid=u["id"], uname=u.get("username"): _show_set_credential_dialog(uid, uname),
             visible=is_admin,
         )
 
         btn_toggle_admin = ft.TextButton(
-            "ถอด Admin" if u.is_admin else "ตั้งเป็น Admin",
+            "ถอด Admin" if u.get("is_admin", False) else "ตั้งเป็น Admin",
             style=ft.ButtonStyle(color=theme.TEXT_SEC),
-            on_click=lambda e, uid=u.id, cur_admin=u.is_admin: _toggle_admin(uid, cur_admin),
-            visible=is_admin and u.id != current.get("id"),
+            on_click=lambda e, uid=u["id"], cur_admin=u.get("is_admin", False): _toggle_admin(uid, cur_admin),
+            visible=is_admin and u["id"] != current.get("id"),
         )
 
         return ft.Container(
@@ -106,7 +106,7 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
                         bgcolor=theme.ACCENT + "22",
                         alignment=ft.Alignment(0, 0),
                         content=ft.Text(
-                            (u.name or "?")[0].upper(),
+                            (u.get("name") or "?")[0].upper(),
                             size=15, weight=ft.FontWeight.BOLD,
                             color=theme.ACCENT,
                         ),
@@ -115,7 +115,7 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
                         controls=[
                             ft.Row(
                                 controls=[
-                                    ft.Text(u.name, size=14,
+                                    ft.Text(u.get("name", ""), size=14,
                                             weight=ft.FontWeight.W_500,
                                             color=theme.TEXT_PRI),
                                     admin_badge,
@@ -125,7 +125,7 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
                             ),
                             ft.Row(
                                 controls=[
-                                    ft.Text(u.role.value if u.role else "",
+                                    ft.Text(u.get("role", ""),
                                             size=12, color=theme.TEXT_SEC),
                                     ft.Text("·", color=theme.TEXT_DIM, size=12),
                                     login_status,
@@ -203,13 +203,9 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
                 return
             try:
                 if is_new:
-                    # กำหนด username + password ให้ existing user
-                    user = user_repo.get_by_id(user_id)
-                    user.username      = uname
-                    user.password_hash = auth_svc.hash_password(pwd)
-                    db.commit()
+                    api.set_user_credential(user_id, uname, pwd)
                 else:
-                    auth_svc.set_password(user_id, pwd)
+                    api.set_user_password(user_id, pwd)
                 _close_dialog()
                 show_snack(page, "บันทึกสำเร็จ ✓")
                 _refresh_list()
@@ -270,8 +266,8 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
                                    text_size=14, bgcolor=theme.BG_INPUT)
         dd_role = ft.Dropdown(
             label="ตำแหน่ง",
-            options=[ft.dropdown.Option(r.value) for r in UserRole],
-            value=UserRole.OTHER.value,
+            options=[ft.dropdown.Option(r) for r in _USER_ROLES],
+            value=_DEFAULT_ROLE,
             border_radius=8,
             text_size=14,
         )
@@ -282,7 +278,7 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
             name     = tf_name.value.strip()
             username = tf_username.value.strip()
             password = tf_password.value
-            role_val = dd_role.value or UserRole.OTHER.value
+            role_val = dd_role.value or _DEFAULT_ROLE
 
             if not name:
                 err_text.value = "กรุณากรอกชื่อ"
@@ -295,14 +291,13 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
                 page.update()
                 return
             try:
-                role = UserRole(role_val)
-                user = user_repo.create(name=name, role=role)
-                user.username      = username
-                user.password_hash = auth_svc.hash_password(password if password else "changeme")
-                user.is_admin      = chk_admin.value or False
-                if not password:
-                    user.password_hash = auth_svc.hash_password("changeme")
-                db.commit()
+                api.create_user(
+                    name=name,
+                    username=username,
+                    password=password if password else "changeme",
+                    role=role_val,
+                    is_admin=chk_admin.value or False,
+                )
                 _close_dialog()
                 show_snack(page, f"สร้าง '{name}' สำเร็จ" +
                            ("" if password else " (รหัสเริ่มต้น: changeme)"))
@@ -355,12 +350,12 @@ def build_settings_view(db: Session, page: ft.Page) -> ft.Control:
         action = "ถอดสิทธิ์ Admin" if cur_admin else "ตั้งเป็น Admin"
 
         def _do(e=None):
-            user = user_repo.get_by_id(user_id)
-            if user:
-                user.is_admin = not cur_admin
-                db.commit()
+            try:
+                api.toggle_user_admin(user_id)
                 show_snack(page, f"{action} สำเร็จ")
                 _refresh_list()
+            except Exception as ex:
+                show_snack(page, f"เกิดข้อผิดพลาด: {ex}", error=True)
 
         confirm_dialog(page,
                        title=f"ยืนยัน{action}",

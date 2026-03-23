@@ -8,22 +8,18 @@ from __future__ import annotations
 from typing import Callable
 
 import flet as ft
-from sqlalchemy.orm import Session
 
-from app.services.auth_service import AuthService
-from app.models.user import User
 from app.utils.exceptions import InvalidCredentialsError, TaskFlowError
 import app.utils.theme as theme
 
 
 def build_login_view(
-    db: Session,
+    api,
     page: ft.Page,
-    on_success: Callable[[User], None],
+    on_success: Callable[[dict], None],
 ) -> ft.Control:
     """Full-window split-panel login: branding left, form right."""
 
-    auth_svc = AuthService(db)
     loading  = {"value": False}
 
     # ── Form controls ──────────────────────────────────────────────
@@ -99,8 +95,10 @@ def build_login_view(
             return
         _set_loading(True)
         try:
-            user = auth_svc.login(username, password)
-            on_success(user)
+            result = api.login(username, password)
+            api.token = result["access_token"]
+            page.session.store.set("api_client_token", result["access_token"])
+            on_success(result["user"])
         except InvalidCredentialsError:
             _set_error("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
             tf_password.value = ""

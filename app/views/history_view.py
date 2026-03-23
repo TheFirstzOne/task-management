@@ -14,15 +14,11 @@ Flet 0.80.x — function-based
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import flet as ft
-from sqlalchemy.orm import Session
 
-from app.models.history import WorkHistory
-from app.models.task import TaskStatus
-from app.services.team_service import TeamService
 from app.utils.theme import (
     BG_DARK, BG_CARD, BG_INPUT, BG_SIDEBAR,
     ACCENT, ACCENT2,
@@ -82,8 +78,7 @@ def _relative_time(dt: datetime) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN ENTRY
 # ══════════════════════════════════════════════════════════════════════════════
-def build_history_view(db: Session, page: ft.Page) -> ft.Control:
-    team_svc = TeamService(db)
+def build_history_view(api, page: ft.Page) -> ft.Control:
 
     # ── State ──────────────────────────────────────────────────────
     state = {
@@ -104,59 +99,52 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
     # ══════════════════════════════════════════════════════════════
     #  DATA HELPERS
     # ══════════════════════════════════════════════════════════════
-    def _all_entries() -> List[WorkHistory]:
-        return (
-            db.query(WorkHistory)
-            .order_by(WorkHistory.created_at.desc())
-            .all()
-        )
-
-    def _filter(entries: List[WorkHistory]) -> List[WorkHistory]:
-        kw       = state["search"].lower().strip()
-        f_action = state["filter_action"]
-        f_actor  = state["filter_actor"]
-        d_from   = state["date_from"]
-        d_to     = state["date_to"]
-
-        result = entries
-
-        if kw:
-            result = [
-                e for e in result
-                if (kw in (e.detail or "").lower())
-                or (e.task and kw in e.task.title.lower())
-                or (kw in e.action.lower())
-            ]
-
-        if f_action != ALL_OPT:
-            result = [e for e in result if e.action == f_action]
-
-        if f_actor != ALL_OPT:
+    def _fetch_entries() -> List[dict]:
+        actor_val = state["filter_actor"]
+        actor_id  = None
+        if actor_val != ALL_OPT:
             try:
-                uid = int(f_actor)
-                result = [e for e in result if e.actor_id == uid]
+                actor_id = int(actor_val)
             except (ValueError, TypeError):
                 pass
 
-        if d_from:
-            dt_from = datetime.combine(d_from, datetime.min.time())
-            result = [e for e in result if e.created_at >= dt_from]
-        if d_to:
-            dt_to = datetime.combine(d_to, datetime.max.time())
-            result = [e for e in result if e.created_at <= dt_to]
+        date_from_str = None
+        date_to_str   = None
+        if state["date_from"]:
+            date_from_str = state["date_from"].strftime("%Y-%m-%d")
+        if state["date_to"]:
+            date_to_str = state["date_to"].strftime("%Y-%m-%d")
 
-        return result
+        return api.get_history(
+            search=state["search"],
+            action=state["filter_action"] if state["filter_action"] != ALL_OPT else "",
+            actor_id=actor_id,
+            date_from=date_from_str,
+            date_to=date_to_str,
+            page=state["page_num"],
+        )
 
     # ══════════════════════════════════════════════════════════════
     #  ROW BUILDER
     # ══════════════════════════════════════════════════════════════
-    def _entry_row(e: WorkHistory) -> ft.Container:
-        action_col = _action_color(e.action)
-        action_lbl = _action_label(e.action)
+    def _entry_row(e: dict) -> ft.Container:
+        action     = e.get("action", "")
+        action_col = _action_color(action)
+        action_lbl = _action_label(action)
 
         # Avatar / actor
-        actor_name = e.actor.name if e.actor else "ระบบ"
+        actor_name = e.get("actor_name", "ระบบ") or "ระบบ"
         actor_init = actor_name[0].upper() if actor_name else "S"
+
+        # Parse created_at
+        created_at_raw = e.get("created_at")
+        if created_at_raw:
+            try:
+                created_at = datetime.fromisoformat(created_at_raw)
+            except (ValueError, TypeError):
+                created_at = None
+        else:
+            created_at = None
 
         avatar = ft.Container(
             width=34, height=34, border_radius=17,
@@ -165,7 +153,7 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
                             weight=ft.FontWeight.BOLD,
                             color=ACCENT,
                             text_align=ft.TextAlign.CENTER),
-            alignment=ft.alignment.Alignment.CENTER,
+            alignment=ft.Alignment(0, 0),
         )
 
         # Action badge
@@ -179,13 +167,18 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
         )
 
         # Task title chip
+        task_id    = e.get("task_id")
+        old_value  = e.get("old_value")
+        new_value  = e.get("new_value")
+        detail_val = e.get("detail", "")
+
         task_chip = ft.Container(
-            visible=e.task is not None,
+            visible=task_id is not None,
             padding=ft.padding.symmetric(horizontal=7, vertical=2),
             border_radius=6,
             bgcolor=BG_INPUT,
             content=ft.Text(
-                e.task.title[:40] if e.task else "",
+                f"Task #{task_id}" if task_id else "",
                 size=11, color=TEXT_SEC,
                 no_wrap=True,
                 overflow=ft.TextOverflow.ELLIPSIS,
@@ -194,7 +187,7 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
 
         # Detail text
         detail_txt = ft.Text(
-            e.detail or "",
+            detail_val or "",
             size=12, color=TEXT_PRI,
             no_wrap=True,
             overflow=ft.TextOverflow.ELLIPSIS,
@@ -202,15 +195,15 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
 
         # Old→New value
         change_row_controls = []
-        if e.old_value and e.new_value:
+        if old_value and new_value:
             change_row_controls = [
-                ft.Text(str(e.old_value)[:30], size=10,
+                ft.Text(str(old_value)[:30], size=10,
                         color=TEXT_SEC,
                         style=ft.TextStyle(
                             decoration=ft.TextDecoration.LINE_THROUGH,
                         )),
                 ft.Icon(ft.Icons.ARROW_FORWARD, size=12, color=TEXT_SEC),
-                ft.Text(str(e.new_value)[:30], size=10, color=ACCENT2),
+                ft.Text(str(new_value)[:30], size=10, color=ACCENT2),
             ]
         change_row = ft.Row(
             controls=change_row_controls,
@@ -221,9 +214,9 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
 
         # Time
         time_txt = ft.Text(
-            _relative_time(e.created_at),
+            _relative_time(created_at),
             size=10, color=TEXT_SEC,
-            tooltip=_fmt_dt(e.created_at),
+            tooltip=_fmt_dt(created_at),
         )
 
         right_col = ft.Column(
@@ -266,19 +259,17 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
     #  REBUILD
     # ══════════════════════════════════════════════════════════════
     def _rebuild():
-        entries   = _all_entries()
-        filtered  = _filter(entries)
-        total     = len(filtered)
-        n_pages   = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-        cur_page  = max(0, min(state["page_num"], n_pages - 1))
-        state["page_num"] = cur_page
+        try:
+            page_entries = _fetch_entries()
+        except Exception as ex:
+            logger.error(f"history fetch error: {ex}")
+            page_entries = []
 
-        start = cur_page * PAGE_SIZE
-        page_entries = filtered[start: start + PAGE_SIZE]
+        cur_page = state["page_num"]
+        total    = len(page_entries)
 
         count_text.value = (
-            f"แสดง {start+1}–{min(start+len(page_entries), total)} "
-            f"จาก {total} รายการ"
+            f"หน้า {cur_page + 1} — {total} รายการ"
         ) if total > 0 else "ไม่พบรายการ"
 
         list_col.controls = (
@@ -295,16 +286,17 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
             disabled=cur_page == 0,
             on_click=lambda e: _go_page(cur_page - 1),
         )
+        has_next = total >= PAGE_SIZE
         btn_next = ft.IconButton(
             icon=ft.Icons.CHEVRON_RIGHT,
-            icon_color=TEXT_SEC if cur_page >= n_pages - 1 else ACCENT,
+            icon_color=TEXT_SEC if not has_next else ACCENT,
             icon_size=20,
-            disabled=cur_page >= n_pages - 1,
+            disabled=not has_next,
             on_click=lambda e: _go_page(cur_page + 1),
         )
         pager_row.controls = [
             btn_prev,
-            ft.Text(f"{cur_page + 1} / {n_pages}", size=12, color=TEXT_SEC),
+            ft.Text(f"หน้า {cur_page + 1}", size=12, color=TEXT_SEC),
             btn_next,
         ]
 
@@ -313,7 +305,7 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
         safe_update(pager_row)
 
     def _go_page(n: int):
-        state["page_num"] = n
+        state["page_num"] = max(0, n)
         _rebuild()
 
     def _on_search(e):
@@ -355,18 +347,23 @@ def build_history_view(db: Session, page: ft.Page) -> ft.Control:
     # ══════════════════════════════════════════════════════════════
     #  FILTER CONTROLS
     # ══════════════════════════════════════════════════════════════
-    # Collect distinct actions from DB
+    # Collect distinct actions from API
     def _action_options():
-        rows = db.query(WorkHistory.action).distinct().all()
-        actions = sorted(set(r[0] for r in rows))
+        try:
+            actions = sorted(api.get_history_actions())
+        except Exception:
+            actions = []
         return [ft.dropdown.Option(ALL_OPT)] + [
             ft.dropdown.Option(key=a, text=_action_label(a)) for a in actions
         ]
 
     def _actor_options():
-        users = team_svc.user_repo.get_all(active_only=False)
+        try:
+            users = api.get_users()
+        except Exception:
+            users = []
         return [ft.dropdown.Option(ALL_OPT)] + [
-            ft.dropdown.Option(key=str(u.id), text=u.name) for u in users
+            ft.dropdown.Option(key=str(u["id"]), text=u["name"]) for u in users
         ]
 
     tf_search = ft.TextField(

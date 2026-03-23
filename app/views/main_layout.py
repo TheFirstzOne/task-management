@@ -6,7 +6,6 @@ Compatible with Flet 0.80.x (function-based, no UserControl)
 
 import threading
 import flet as ft
-from app.database import SessionLocal
 import app.utils.theme as theme
 from app.utils.ui_helpers import safe_update
 from app.utils import shortcut_registry
@@ -24,7 +23,7 @@ NAV_ITEMS = [
 ]
 
 
-def build_main_layout(page: ft.Page, on_logout: callable = None) -> ft.Control:
+def build_main_layout(page: ft.Page, on_logout: callable = None, api=None) -> ft.Control:
     """Build and return the complete app shell.
 
     on_logout: optional callback called when the user clicks Logout.
@@ -42,7 +41,6 @@ def build_main_layout(page: ft.Page, on_logout: callable = None) -> ft.Control:
     task_badge_info: dict = {"ctrl": None}
     near_badge_info: dict = {"ctrl": None}
     sidebar_collapsed = {"value": False}
-    _active_db:      dict = {"value": None}   # track current session for cleanup
     _search_target:  dict = {"value": None}   # task_id to highlight after navigate
     content_area = ft.Column(expand=True, spacing=0)
 
@@ -66,39 +64,28 @@ def build_main_layout(page: ft.Page, on_logout: callable = None) -> ft.Control:
         from app.views.history_view   import build_history_view
         from app.views.settings_view  import build_settings_view
         from app.views.account_view   import build_account_view
-        from app.views.account_view   import build_account_view
 
         # Clear per-view shortcuts before building new view
         shortcut_registry.clear()
         # Re-register global shortcuts after clear
         shortcut_registry.register("ctrl_f", _focus_search)
 
-        # Close previous session before creating a new one (prevent session leak)
-        if _active_db["value"] is not None:
-            try:
-                _active_db["value"].close()
-            except Exception:
-                pass
-
-        db = SessionLocal()   # fresh session per navigation — avoids identity map bloat
-        _active_db["value"] = db
-
         # Consume highlight target (set by search) before building view
         highlight_id = _search_target["value"]
         _search_target["value"] = None
 
         factories = {
-            "dashboard": lambda: _build_dash(db, navigate_fn=navigate),
-            "team":      lambda: build_team_view(db, page),
-            "task":      lambda: build_task_view(db, page, highlight_task_id=highlight_id),
-            "calendar":  lambda: build_calendar_view(db, page),
-            "diary":     lambda: build_diary_view(db, page),
-            "summary":   lambda: build_summary_view(db, page),
-            "history":   lambda: build_history_view(db, page),
-            "account":   lambda: build_account_view(db, page),
-            "user_mgmt": lambda: build_settings_view(db, page),
+            "dashboard": lambda: _build_dash(api, navigate_fn=navigate),
+            "team":      lambda: build_team_view(api, page),
+            "task":      lambda: build_task_view(api, page, highlight_task_id=highlight_id),
+            "calendar":  lambda: build_calendar_view(api, page),
+            "diary":     lambda: build_diary_view(api, page),
+            "summary":   lambda: build_summary_view(api, page),
+            "history":   lambda: build_history_view(api, page),
+            "account":   lambda: build_account_view(api, page),
+            "user_mgmt": lambda: build_settings_view(api, page),
         }
-        return factories.get(key, lambda: _build_dash(db, navigate_fn=navigate))()
+        return factories.get(key, lambda: _build_dash(api, navigate_fn=navigate))()
 
     # ── Overdue + near-due badge refresh ─────────────────────────
     def _refresh_task_badge() -> None:
@@ -107,14 +94,9 @@ def build_main_layout(page: ft.Page, on_logout: callable = None) -> ft.Control:
         if not ctrl and not near_ctrl:
             return
         try:
-            from app.services.task_service import TaskService
-            badge_db = SessionLocal()
-            try:
-                svc   = TaskService(badge_db)
-                count = svc.get_dashboard_stats().get("overdue", 0)
-                near  = svc.get_near_due_count(days_ahead=3)
-            finally:
-                badge_db.close()
+            stats = api.get_dashboard_stats()
+            count = stats.get("overdue", 0)
+            near  = api.get_near_due_count(days=3)
             expanded = not sidebar_collapsed["value"]
             if ctrl:
                 if count > 0 and expanded:
@@ -380,24 +362,19 @@ def build_main_layout(page: ft.Page, on_logout: callable = None) -> ft.Control:
             safe_update(search_results_col)
             return
         try:
-            from app.services.task_service import TaskService
-            s_db = SessionLocal()
-            try:
-                results = TaskService(s_db).search_tasks(query)
-            finally:
-                s_db.close()
+            results = api.search_tasks(query)
         except Exception:
             results = []
 
         def _make_result_btn(t):
             from app.utils.theme import status_color
-            dot_color = status_color(t.status.value if hasattr(t.status, "value") else t.status)
+            dot_color = status_color(t.get("status", "Pending"))
             return ft.Container(
                 border_radius=6,
                 padding=ft.padding.symmetric(horizontal=8, vertical=6),
                 bgcolor="transparent",
                 ink=True,
-                on_click=lambda e, tid=t.id: _on_search_select(tid),
+                on_click=lambda e, tid=t["id"]: _on_search_select(tid),
                 content=ft.Row(
                     controls=[
                         ft.Container(
@@ -405,7 +382,7 @@ def build_main_layout(page: ft.Page, on_logout: callable = None) -> ft.Control:
                             bgcolor=dot_color,
                         ),
                         ft.Text(
-                            t.title, size=12, color=theme.TEXT_PRI,
+                            t["title"], size=12, color=theme.TEXT_PRI,
                             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
                             expand=True,
                         ),

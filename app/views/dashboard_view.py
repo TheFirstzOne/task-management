@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard View — Phase 13 (B) — Professional Light Theme
+Dashboard View — Phase 21 (API-backed)
 Charts saved as PNG files (Flet desktop does not support data-URI in Image.src).
 Layout: balanced 2-column grid inspired by Linear / Asana / Monday.com style.
 """
@@ -17,12 +17,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import flet as ft
-from sqlalchemy.orm import Session
 
 import app.utils.theme as theme
 from app.utils.theme import status_color, priority_color
-from app.services.task_service import TaskService
-from app.models.task import TaskStatus
 from app.database import DATA_DIR
 
 
@@ -203,7 +200,7 @@ def _chart_status_donut(stats: dict) -> ft.Control:
 
 # ── B2: Priority Bar ────────────────────────────────────────────────────────
 def _chart_priority_bar(priority_counts: dict) -> ft.Control:
-    """Accepts pre-collected {priority_value: count} dict — no ORM access."""
+    """Accepts pre-collected {priority_value: count} dict."""
     counts = priority_counts
     order  = ["Urgent", "High", "Medium", "Low"]
     vals   = [counts.get(p, 0) for p in order]
@@ -240,14 +237,14 @@ def _chart_priority_bar(priority_counts: dict) -> ft.Control:
 
 # ── B3: Weekly Trend ─────────────────────────────────────────────────────────
 def _chart_weekly_trend(trend_created: list, trend_done: list) -> ft.Control:
-    """Accepts pre-collected tuples — no ORM access in background thread."""
+    """Accepts pre-collected tuples — no API access in background thread."""
     today = datetime.now().date()
     days  = [today - timedelta(days=i) for i in range(6, -1, -1)]
 
-    created = Counter(row[0].date() for row in trend_created)
+    created = Counter(row[0].date() for row in trend_created if row[0])
     done_d  = Counter(
         row[0].date() for row in trend_done
-        if row[1] == TaskStatus.DONE)
+        if row[0] and row[1] == "Done")
 
     c_vals  = [created.get(d, 0) for d in days]
     d_vals  = [done_d.get(d, 0) for d in days]
@@ -284,7 +281,7 @@ def _chart_weekly_trend(trend_created: list, trend_done: list) -> ft.Control:
 
 # ── B4: Team Workload ────────────────────────────────────────────────────────
 def _chart_team_workload(workload_counter: dict) -> ft.Control:
-    """Accepts pre-collected {name: count} dict — avoids lazy-load in background thread."""
+    """Accepts pre-collected {name: count} dict."""
     counter = Counter(workload_counter)
 
     if not counter:
@@ -325,9 +322,9 @@ def _chart_team_workload(workload_counter: dict) -> ft.Control:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  MAIN ENTRY
 # ═══════════════════════════════════════════════════════════════════════════════
-def build_dashboard_view(db: Session, navigate_fn=None) -> ft.Control:
+def build_dashboard_view(api, navigate_fn=None) -> ft.Control:
     try:
-        return _build_dashboard_inner(db, navigate_fn)
+        return _build_dashboard_inner(api, navigate_fn)
     except Exception as err:
         tb = traceback.format_exc()
         return ft.Container(
@@ -347,10 +344,9 @@ def build_dashboard_view(db: Session, navigate_fn=None) -> ft.Control:
         )
 
 
-def _build_dashboard_inner(db: Session, navigate_fn=None) -> ft.Control:
-    svc   = TaskService(db)
-    stats = svc.get_dashboard_stats()
-    tasks = svc.get_all_tasks()
+def _build_dashboard_inner(api, navigate_fn=None) -> ft.Control:
+    stats = api.get_dashboard_stats()
+    tasks = api.get_tasks()
 
     # ── Stat cards ─────────────────────────────────────────────────
     def _stat_card(label: str, value: int, color: str,
@@ -403,24 +399,36 @@ def _build_dashboard_inner(db: Session, navigate_fn=None) -> ft.Control:
         spacing=10,
     )
 
-    # ── Pre-collect ALL data needed by charts (must happen in main thread) ────
-    # Background thread cannot safely access lazy-loaded relationships or
-    # expired ORM attributes after session changes. Snapshot everything now.
+    # ── Pre-collect ALL data needed by charts ─────────────────────
+    # With plain dicts, no lazy-load issues — but keep the same pre-collection
+    # structure for clarity and to avoid repeated API calls in background threads.
     from collections import Counter as _Counter
 
-    # For _chart_team_workload — requires lazy-loaded task.assignee.name
+    # For _chart_team_workload
     _wl_counter: _Counter = _Counter()
     for _t in tasks:
-        if _t.status not in (TaskStatus.DONE, TaskStatus.CANCELLED):
-            _wl_counter[_t.assignee.name if _t.assignee else "ไม่ระบุ"] += 1
+        if _t.get("status") not in ("Done", "Cancelled"):
+            _wl_counter[_t.get("assignee_name") or "ไม่ระบุ"] += 1
     workload_counter = dict(_wl_counter)
 
     # For _chart_priority_bar — snapshot priority counts
-    priority_counts = dict(_Counter(t.priority.value for t in tasks if t.status not in (TaskStatus.DONE, TaskStatus.CANCELLED)))
+    priority_counts = dict(_Counter(
+        t.get("priority", "Medium") for t in tasks
+        if t.get("status") not in ("Done", "Cancelled")
+    ))
 
-    # For _chart_weekly_trend — snapshot dates and statuses
-    trend_created = [(t.created_at, ) for t in tasks if t.created_at]
-    trend_done    = [(t.updated_at, t.status) for t in tasks if t.updated_at]
+    # For _chart_weekly_trend — snapshot dates and statuses as plain tuples
+    def _parse_dt(val):
+        if not val:
+            return None
+        try:
+            return datetime.fromisoformat(val)
+        except Exception:
+            return None
+
+    trend_created = [(_parse_dt(t.get("created_at")),) for t in tasks if t.get("created_at")]
+    trend_done    = [(_parse_dt(t.get("updated_at")), t.get("status", "Pending"))
+                     for t in tasks if t.get("updated_at")]
 
     # ── UX#5: Chart area with loading indicator ────────────────────
     def _loading_placeholder(height: int = 260) -> ft.Container:
@@ -504,7 +512,7 @@ def _build_dashboard_inner(db: Session, navigate_fn=None) -> ft.Control:
 
     def _render_charts_bg() -> None:
         """Parallel rendering: 4 threads, one per chart.
-        Uses only pre-collected plain dicts/lists — no ORM objects."""
+        Uses only pre-collected plain dicts/lists — no API calls."""
         pairs = [
             (ph_donut,    lambda: _chart_status_donut(stats)),
             (ph_prio,     lambda: _chart_priority_bar(priority_counts)),
