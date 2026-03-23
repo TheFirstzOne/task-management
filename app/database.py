@@ -66,6 +66,11 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_time_logs_running  ON time_logs (is_running)",
         "CREATE INDEX IF NOT EXISTS ix_users_team_id      ON users (team_id)",
         "CREATE INDEX IF NOT EXISTS ix_users_is_deleted   ON users (is_deleted)",
+        # Phase 19 — Auth columns
+        "ALTER TABLE users ADD COLUMN username      VARCHAR(50)",
+        "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)",
+        "ALTER TABLE users ADD COLUMN is_admin      BOOLEAN NOT NULL DEFAULT 0",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username) WHERE username IS NOT NULL",
     ]
     for _sql in _migrations:
         try:

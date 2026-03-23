@@ -488,7 +488,12 @@ def _build_dashboard_inner(db: Session, navigate_fn=None) -> ft.Control:
             pass
 
     def _render_one(placeholder: ft.Container, build_fn, is_cached: bool) -> None:
-        """Render one chart in its own thread. Skip if data unchanged and PNG exists."""
+        """Render one chart in its own thread. Skip if data unchanged and PNG exists.
+
+        Thread safety: each build_fn creates its own Figure via plt.subplots() which
+        is safe on the Agg backend as long as figures are independent. _MATPLOTLIB_LOCK
+        guards only savefig/plt.close — the only operations touching global pyplot state.
+        """
         if is_cached:
             return   # PNG on disk is already current — nothing to do
         try:

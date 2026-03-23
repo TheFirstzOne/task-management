@@ -27,9 +27,25 @@ if sys.platform == "win32":
     _pe._ProactorBasePipeTransport._call_connection_lost = _patched_ccl
 
 import flet as ft
-from app.database import init_db
+from app.database import init_db, SessionLocal
 from app.views.main_layout import build_main_layout
+from app.views.login_view import build_login_view
+from app.services.auth_service import AuthService
 import app.utils.theme as theme
+
+
+def _ensure_default_admin(db) -> None:
+    """Create default admin account on first run if no login user exists."""
+    auth_svc = AuthService(db)
+    if not auth_svc.has_any_login_user():
+        try:
+            auth_svc.create_admin(
+                username="admin",
+                name="Administrator",
+                password="admin",
+            )
+        except Exception:
+            pass  # Already exists — race condition safety
 
 
 def main(page: ft.Page) -> None:
@@ -45,13 +61,47 @@ def main(page: ft.Page) -> None:
     page.bgcolor    = theme.BG_DARK
     page.padding    = 0
 
-    # ── Init database ─────────────────────────────────────────────
+    # ── Init database + first-run admin ───────────────────────────
     init_db()
+    setup_db = SessionLocal()
+    try:
+        _ensure_default_admin(setup_db)
+    finally:
+        setup_db.close()
 
-    # ── Mount main layout ─────────────────────────────────────────
-    layout = build_main_layout(page)
-    page.add(layout)
-    page.update()
+    # ── Login gate ────────────────────────────────────────────────
+    def _show_login() -> None:
+        login_db = SessionLocal()
+        login_view = build_login_view(
+            db=login_db,
+            page=page,
+            on_success=_on_login_success,
+        )
+        page.controls.clear()
+        page.add(login_view)
+        page.update()
+
+    def _on_login_success(user) -> None:
+        # Store current user in session
+        page.session.store.set("current_user", {
+            "id":       user.id,
+            "name":     user.name,
+            "is_admin": user.is_admin,
+            "username": user.username,
+        })
+        _show_main()
+
+    def _on_logout() -> None:
+        page.session.store.remove("current_user")
+        _show_login()
+
+    def _show_main() -> None:
+        layout = build_main_layout(page, on_logout=_on_logout)
+        page.controls.clear()
+        page.add(layout)
+        page.update()
+
+    _show_login()
 
 
 if __name__ == "__main__":

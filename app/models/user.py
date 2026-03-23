@@ -21,15 +21,19 @@ class UserRole(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    name       = Column(String(100), nullable=False)
-    role       = Column(Enum(UserRole), nullable=False, default=UserRole.TECHNICIAN)
-    skills     = Column(String(255), nullable=True)          # comma-separated tags
-    is_active  = Column(Boolean, default=True, nullable=False)
-    is_deleted = Column(Boolean, default=False, nullable=False, server_default="0", index=True)
-    team_id    = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    name          = Column(String(100), nullable=False)
+    role          = Column(Enum(UserRole), nullable=False, default=UserRole.TECHNICIAN)
+    skills        = Column(String(255), nullable=True)          # comma-separated tags
+    is_active     = Column(Boolean, default=True, nullable=False)
+    is_deleted    = Column(Boolean, default=False, nullable=False, server_default="0", index=True)
+    team_id       = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    updated_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    # Auth fields (Phase 19)
+    username      = Column(String(50), unique=True, nullable=True, index=True)
+    password_hash = Column(String(255), nullable=True)
+    is_admin      = Column(Boolean, default=False, nullable=False, server_default="0")
 
     # Relationships
     team             = relationship("Team", back_populates="members")

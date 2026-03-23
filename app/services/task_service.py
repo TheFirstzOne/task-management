@@ -40,6 +40,7 @@ class TaskService:
     def _log(self, task_id: int, action: str, detail: str = "",
              old_value: str = "", new_value: str = "",
              actor_id: Optional[int] = None) -> None:
+        """Stage a history entry. Caller is responsible for committing."""
         entry = WorkHistory(
             task_id=task_id,
             actor_id=actor_id,
@@ -49,7 +50,6 @@ class TaskService:
             new_value=new_value,
         )
         self.db.add(entry)
-        self.db.commit()
 
     # ── Dependency validation ──────────────────────────────────────
     def _validate_dependency(self, task_id: Optional[int],
@@ -132,6 +132,7 @@ class TaskService:
             depends_on_id=depends_on_id,
         )
         self._log(task.id, "created", detail=f"สร้างงาน: {title}", actor_id=created_by_id)
+        self.db.commit()
         return task
 
     # ── Read ──────────────────────────────────────────────────────
@@ -228,6 +229,8 @@ class TaskService:
             else:
                 self._log(task_id, f"updated_{field}", detail=f"แก้ไข {field}",
                           old_value=str(old), new_value=str(new), actor_id=actor_id)
+        if changed:
+            self.db.commit()
         return updated
 
     def change_status(self, task_id: int, new_status: TaskStatus,
@@ -240,6 +243,7 @@ class TaskService:
                   detail=f"เปลี่ยนสถานะ: {old_status.value} → {new_status.value}",
                   old_value=old_status.value, new_value=new_status.value,
                   actor_id=actor_id)
+        self.db.commit()
         return updated
 
     def assign_task(self, task_id: int, assignee_id: Optional[int],
@@ -252,6 +256,7 @@ class TaskService:
                   detail="มอบหมายงาน",
                   old_value=str(old_assignee), new_value=str(assignee_id),
                   actor_id=actor_id)
+        self.db.commit()
         return updated
 
     # ── Delete ────────────────────────────────────────────────────
@@ -265,6 +270,7 @@ class TaskService:
         if not task:
             raise NotFoundError("Task", task_id)
         self._log(task_id, "restored", detail="กู้คืนงานที่ถูกลบ")
+        self.db.commit()
         return task
 
     # ── SubTasks ──────────────────────────────────────────────────
@@ -282,9 +288,27 @@ class TaskService:
                     author_id: Optional[int] = None):
         comment = self.task_repo.add_comment(task_id, body, author_id)
         self._log(task_id, "commented", detail=body[:80], actor_id=author_id)
+        self.db.commit()
         return comment
 
     # ── Summary / Dashboard ───────────────────────────────────────
+    def search_tasks(self, query: str, limit: int = 20) -> List[Task]:
+        """Full-text search across title, description, and tags (excludes deleted + cancelled)."""
+        if not query or not query.strip():
+            return []
+        q = f"%{query.strip()}%"
+        return (
+            self.db.query(Task)
+            .filter(
+                Task.is_deleted == False,
+                Task.status.notin_([TaskStatus.CANCELLED]),
+                (Task.title.ilike(q) | Task.description.ilike(q) | Task.tags.ilike(q)),
+            )
+            .order_by(Task.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
+
     def get_dashboard_stats(self) -> DashboardStats:
         """Return task counts using SQL COUNT queries — avoids loading all rows."""
         base = (

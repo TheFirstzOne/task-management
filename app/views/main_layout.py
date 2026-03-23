@@ -4,6 +4,7 @@ Sidebar navigation + Content area + Settings (dummy)
 Compatible with Flet 0.80.x (function-based, no UserControl)
 """
 
+import threading
 import flet as ft
 from app.database import SessionLocal
 import app.utils.theme as theme
@@ -12,18 +13,27 @@ from app.utils import shortcut_registry
 
 
 NAV_ITEMS = [
-    ("dashboard", ft.Icons.DASHBOARD_OUTLINED,     "Dashboard"),
-    ("team",      ft.Icons.GROUP_OUTLINED,          "ทีมงาน"),
-    ("task",      ft.Icons.TASK_ALT_OUTLINED,       "งาน"),
-    ("calendar",  ft.Icons.CALENDAR_MONTH_OUTLINED, "ปฏิทิน"),
-    ("diary",     ft.Icons.BOOK_OUTLINED,           "บันทึกงาน"),
-    ("summary",   ft.Icons.SUMMARIZE_OUTLINED,      "สรุปงาน"),
-    ("history",   ft.Icons.HISTORY_OUTLINED,        "ประวัติ"),
+    ("dashboard", ft.Icons.DASHBOARD_OUTLINED,       "Dashboard"),
+    ("team",      ft.Icons.GROUP_OUTLINED,            "ทีมงาน"),
+    ("task",      ft.Icons.TASK_ALT_OUTLINED,         "งาน"),
+    ("calendar",  ft.Icons.CALENDAR_MONTH_OUTLINED,   "ปฏิทิน"),
+    ("diary",     ft.Icons.BOOK_OUTLINED,             "บันทึกงาน"),
+    ("summary",   ft.Icons.SUMMARIZE_OUTLINED,        "สรุปงาน"),
+    ("history",   ft.Icons.HISTORY_OUTLINED,          "ประวัติ"),
+    ("user_mgmt", ft.Icons.MANAGE_ACCOUNTS_OUTLINED,  "จัดการ Users"),  # admin only
 ]
 
 
-def build_main_layout(page: ft.Page) -> ft.Control:
-    """Build and return the complete app shell."""
+def build_main_layout(page: ft.Page, on_logout: callable = None) -> ft.Control:
+    """Build and return the complete app shell.
+
+    on_logout: optional callback called when the user clicks Logout.
+               If None, logout is hidden.
+    """
+
+    # ── Session — current user ────────────────────────────────────
+    _current_user = page.session.store.get("current_user") or {}
+    _is_admin     = _current_user.get("is_admin", False)
 
     # ── State ─────────────────────────────────────────────────────
     active_key        = {"value": "dashboard"}
@@ -33,6 +43,7 @@ def build_main_layout(page: ft.Page) -> ft.Control:
     near_badge_info: dict = {"ctrl": None}
     sidebar_collapsed = {"value": False}
     _active_db:      dict = {"value": None}   # track current session for cleanup
+    _search_target:  dict = {"value": None}   # task_id to highlight after navigate
     content_area = ft.Column(expand=True, spacing=0)
 
     # ── Keyboard shortcut dispatcher ──────────────────────────────
@@ -40,6 +51,9 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         shortcut_registry.dispatch(e.key, e.ctrl, e.shift, e.alt)
 
     page.on_keyboard_event = _on_keyboard
+
+    def _focus_search():
+        tf_search.focus()
 
     # ── View factory ──────────────────────────────────────────────
     def get_view(key: str) -> ft.Control:
@@ -50,9 +64,14 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         from app.views.diary_view     import build_diary_view
         from app.views.summary_view   import build_summary_view
         from app.views.history_view   import build_history_view
+        from app.views.settings_view  import build_settings_view
+        from app.views.account_view   import build_account_view
+        from app.views.account_view   import build_account_view
 
         # Clear per-view shortcuts before building new view
         shortcut_registry.clear()
+        # Re-register global shortcuts after clear
+        shortcut_registry.register("ctrl_f", _focus_search)
 
         # Close previous session before creating a new one (prevent session leak)
         if _active_db["value"] is not None:
@@ -63,14 +82,21 @@ def build_main_layout(page: ft.Page) -> ft.Control:
 
         db = SessionLocal()   # fresh session per navigation — avoids identity map bloat
         _active_db["value"] = db
+
+        # Consume highlight target (set by search) before building view
+        highlight_id = _search_target["value"]
+        _search_target["value"] = None
+
         factories = {
             "dashboard": lambda: _build_dash(db, navigate_fn=navigate),
             "team":      lambda: build_team_view(db, page),
-            "task":      lambda: build_task_view(db, page),
+            "task":      lambda: build_task_view(db, page, highlight_task_id=highlight_id),
             "calendar":  lambda: build_calendar_view(db, page),
             "diary":     lambda: build_diary_view(db, page),
             "summary":   lambda: build_summary_view(db, page),
             "history":   lambda: build_history_view(db, page),
+            "account":   lambda: build_account_view(db, page),
+            "user_mgmt": lambda: build_settings_view(db, page),
         }
         return factories.get(key, lambda: _build_dash(db, navigate_fn=navigate))()
 
@@ -188,6 +214,7 @@ def build_main_layout(page: ft.Page) -> ft.Control:
             content=ft.Row(controls=row_controls, spacing=10),
             on_click=lambda e, k=key: navigate(k),
             ink=True,
+            visible=True if key != "user_mgmt" else _is_admin,
         )
         nav_containers[key] = c
         return c
@@ -220,14 +247,19 @@ def build_main_layout(page: ft.Page) -> ft.Control:
 
         logo_text_ctrl.visible  = not collapsed
 
+        # Hide search bar when collapsed (too narrow to be useful)
+        search_container.visible = not collapsed
+        if collapsed:
+            tf_search.value = ""
+            search_results_col.controls = []
+            search_results_col.visible = False
+
         # Replace icon content — reliable way to change icon in Flet 0.82
         toggle_btn_ctrl.content = ft.Icon(
             ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.CHEVRON_LEFT,
             color=theme.TEXT_SEC, size=18,
         )
         toggle_btn_ctrl.update()
-
-        settings_label_ctrl.visible = not collapsed
 
         # Nav buttons — centre icon + tighten padding when collapsed
         for key, lbl in nav_label_refs.items():
@@ -245,6 +277,21 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         sb_row.alignment = (ft.MainAxisAlignment.CENTER if collapsed
                              else ft.MainAxisAlignment.START)
 
+        settings_label_ctrl.visible = not collapsed
+        account_label_ctrl.visible  = not collapsed
+        logout_label_ctrl.visible   = not collapsed
+
+        account_btn.padding = ft.padding.symmetric(horizontal=2 if collapsed else 10)
+        ab_row: ft.Row = account_btn.content
+        ab_row.alignment = (ft.MainAxisAlignment.CENTER if collapsed
+                            else ft.MainAxisAlignment.START)
+
+        if on_logout is not None:
+            logout_btn.padding = ft.padding.symmetric(horizontal=2 if collapsed else 10)
+            lo_row: ft.Row = logout_btn.content
+            lo_row.alignment = (ft.MainAxisAlignment.CENTER if collapsed
+                                else ft.MainAxisAlignment.START)
+
         # Badge is only meaningful when sidebar is expanded
         if task_badge_info.get("ctrl"):
             if collapsed:
@@ -256,7 +303,7 @@ def build_main_layout(page: ft.Page) -> ft.Control:
 
     # ── Settings button ───────────────────────────────────────────
     def _open_settings(e=None):
-        pass   # TODO: implement settings in the future
+        pass  # dummy — feature coming soon
 
     settings_label_ctrl = ft.Text("ตั้งค่า", color=theme.TEXT_SEC, size=14, expand=True)
 
@@ -265,6 +312,7 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         border_radius=8,
         bgcolor="transparent",
         padding=ft.padding.symmetric(horizontal=10),
+        visible=True,
         content=ft.Row(
             controls=[
                 ft.Icon(ft.Icons.SETTINGS_OUTLINED, color=theme.TEXT_SEC, size=20),
@@ -274,6 +322,163 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         ),
         on_click=_open_settings,
         ink=True,
+    )
+
+    # ── Account button (บัญชี — ทุก user เห็น) ───────────────────────────────
+    account_label_ctrl = ft.Text("บัญชี", color=theme.TEXT_SEC, size=14, expand=True)
+
+    def _open_account(e=None):
+        navigate("account")
+
+    account_btn = ft.Container(
+        height=42,
+        border_radius=8,
+        bgcolor="transparent",
+        padding=ft.padding.symmetric(horizontal=10),
+        content=ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.PERSON_OUTLINED, color=theme.TEXT_SEC, size=20),
+                account_label_ctrl,
+            ],
+            spacing=10,
+        ),
+        on_click=_open_account,
+        ink=True,
+    )
+
+    # ── Logout button (shown only when on_logout callback is provided) ─────────
+    logout_label_ctrl = ft.Text("ออกจากระบบ", color="#EF4444", size=14, expand=True)
+
+    def _do_logout(e=None):
+        if on_logout:
+            on_logout()
+
+    logout_btn = ft.Container(
+        height=42,
+        border_radius=8,
+        bgcolor="transparent",
+        padding=ft.padding.symmetric(horizontal=10),
+        visible=on_logout is not None,
+        content=ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.LOGOUT, color="#EF4444", size=20),
+                logout_label_ctrl,
+            ],
+            spacing=10,
+        ),
+        on_click=_do_logout,
+        ink=True,
+    )
+
+    # ── Search bar ────────────────────────────────────────────────
+    search_results_col = ft.Column(controls=[], spacing=2, visible=False)
+
+    def _do_search(query: str) -> None:
+        if not query.strip():
+            search_results_col.controls = []
+            search_results_col.visible = False
+            safe_update(search_results_col)
+            return
+        try:
+            from app.services.task_service import TaskService
+            s_db = SessionLocal()
+            try:
+                results = TaskService(s_db).search_tasks(query)
+            finally:
+                s_db.close()
+        except Exception:
+            results = []
+
+        def _make_result_btn(t):
+            from app.utils.theme import status_color
+            dot_color = status_color(t.status.value if hasattr(t.status, "value") else t.status)
+            return ft.Container(
+                border_radius=6,
+                padding=ft.padding.symmetric(horizontal=8, vertical=6),
+                bgcolor="transparent",
+                ink=True,
+                on_click=lambda e, tid=t.id: _on_search_select(tid),
+                content=ft.Row(
+                    controls=[
+                        ft.Container(
+                            width=6, height=6, border_radius=3,
+                            bgcolor=dot_color,
+                        ),
+                        ft.Text(
+                            t.title, size=12, color=theme.TEXT_PRI,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                            expand=True,
+                        ),
+                    ],
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            )
+
+        if results:
+            search_results_col.controls = [_make_result_btn(t) for t in results]
+        else:
+            search_results_col.controls = [
+                ft.Text("ไม่พบผลลัพธ์", size=12, color=theme.TEXT_SEC,
+                        italic=True,
+                        text_align=ft.TextAlign.CENTER)
+            ]
+        search_results_col.visible = True
+        safe_update(search_results_col)
+
+    def _on_search_select(task_id: int) -> None:
+        tf_search.value = ""
+        search_results_col.controls = []
+        search_results_col.visible = False
+        safe_update(search_results_col)
+        _search_target["value"] = task_id
+        if active_key["value"] == "task":
+            # Already on task view — reload it with the highlight
+            content_area.controls = [get_view("task")]
+            active_key["value"] = "task"   # keep active
+            content_area.update()
+        else:
+            navigate("task")
+
+    _search_debounce: dict = {"timer": None}
+
+    def _on_search_change(e):
+        query = e.control.value or ""
+        if _search_debounce["timer"]:
+            _search_debounce["timer"].cancel()
+        t = threading.Timer(0.3, _do_search, args=[query])
+        _search_debounce["timer"] = t
+        t.start()
+
+    tf_search = ft.TextField(
+        hint_text="ค้นหางาน... (Ctrl+F)",
+        hint_style=ft.TextStyle(size=12, color=theme.TEXT_SEC),
+        text_size=12,
+        height=36,
+        border_radius=8,
+        border_color=theme.BORDER,
+        focused_border_color=theme.ACCENT,
+        bgcolor=theme.BG_INPUT if hasattr(theme, "BG_INPUT") else "#F8FAFC",
+        content_padding=ft.padding.symmetric(horizontal=10, vertical=4),
+        prefix_icon=ft.Icons.SEARCH,
+        on_change=_on_search_change,
+    )
+
+    search_container = ft.Column(
+        controls=[
+            tf_search,
+            ft.Container(
+                content=search_results_col,
+                bgcolor=theme.BG_CARD,
+                border=ft.border.all(1, theme.BORDER),
+                border_radius=8,
+                padding=ft.padding.symmetric(vertical=4),
+                visible=True,
+                clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            ),
+        ],
+        spacing=4,
+        visible=True,
     )
 
     # ── Sidebar ───────────────────────────────────────────────────
@@ -301,11 +506,15 @@ def build_main_layout(page: ft.Page) -> ft.Control:
         content=ft.Column(
             controls=[
                 logo,
-                ft.Divider(height=24, color=theme.BORDER),
+                ft.Divider(height=16, color=theme.BORDER),
+                search_container,
+                ft.Divider(height=8, color=theme.BORDER),
                 nav_col,
                 ft.Container(expand=True),          # spacer — push settings to bottom
                 ft.Divider(height=1, color=theme.BORDER),
                 settings_btn,
+                account_btn,
+                logout_btn,
             ],
             spacing=0,
             expand=True,

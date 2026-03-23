@@ -48,23 +48,16 @@ DEFAULT_PRIORITY = "Medium"    # default task priority on new dialog
 # ══════════════════════════════════════════════════════════════════════════════
 #  HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-def _status_chip(status: str) -> ft.Container:
-    color = status_color(status)
+def _chip(label: str, color: str) -> ft.Container:
     return ft.Container(
         padding=ft.padding.symmetric(horizontal=8, vertical=3),
         border_radius=20,
         bgcolor=color,
-        content=ft.Text(status, size=11, color="#FFFFFF", weight=ft.FontWeight.W_500),
+        content=ft.Text(label, size=11, color="#FFFFFF", weight=ft.FontWeight.W_500),
     )
 
-def _priority_chip(priority: str) -> ft.Container:
-    color = priority_color(priority)
-    return ft.Container(
-        padding=ft.padding.symmetric(horizontal=8, vertical=3),
-        border_radius=20,
-        bgcolor=color,
-        content=ft.Text(priority, size=11, color="#FFFFFF", weight=ft.FontWeight.W_500),
-    )
+def _status_chip(status: str)     -> ft.Container: return _chip(status,   status_color(status))
+def _priority_chip(priority: str) -> ft.Container: return _chip(priority, priority_color(priority))
 
 def _due_label(due: Optional[datetime]) -> ft.Text:
     if not due:
@@ -86,7 +79,8 @@ def _due_label(due: Optional[datetime]) -> ft.Text:
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN ENTRY
 # ══════════════════════════════════════════════════════════════════════════════
-def build_task_view(db: Session, page: ft.Page) -> ft.Control:
+def build_task_view(db: Session, page: ft.Page,
+                    highlight_task_id: Optional[int] = None) -> ft.Control:
     task_svc = TaskService(db)
     team_svc = TeamService(db)
 
@@ -578,10 +572,10 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         return controls
 
     # ══════════════════════════════════════════════════════════════
-    #  DETAIL PANEL
+    #  DETAIL PANEL — assembled from 4 focused sub-builders
     # ══════════════════════════════════════════════════════════════
-    def _build_detail_panel(task) -> ft.Container:
-        # ── Subtask section ───────────────────────────────────────
+    def _build_subtask_section(task) -> tuple:
+        """Returns (subtask_col, add_row) — captures outer closure."""
         subtask_col = ft.Column(spacing=6)
         new_sub_tf  = ft.TextField(
             hint_text="เพิ่ม sub-task...",
@@ -590,6 +584,36 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             height=40, content_padding=ft.padding.symmetric(horizontal=10, vertical=8),
             text_size=13,
         )
+
+        def _confirm_delete_subtask(sid: int, title: str):
+            confirm_msg.value = f'ต้องการลบ sub-task "{title}" ใช่ไหม?'
+            def _do():
+                task_svc.delete_subtask(sid)
+                _refresh_subtasks()
+            _confirm_fn["value"] = _do
+            confirm_dlg.open = True
+            safe_page_update(page)
+
+        def _subtask_row(st) -> ft.Row:
+            return ft.Row(
+                controls=[
+                    ft.Checkbox(
+                        value=st.is_done, fill_color=ACCENT,
+                        on_change=lambda e, sid=st.id: (
+                            task_svc.toggle_subtask(sid), _refresh_subtasks()),
+                    ),
+                    ft.Text(st.title, size=13,
+                            color=TEXT_SEC if st.is_done else TEXT_PRI, expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE, icon_size=14, icon_color=TEXT_SEC,
+                        tooltip="ลบ sub-task",
+                        on_click=lambda e, sid=st.id, t=st.title: (
+                            _confirm_delete_subtask(sid, t)),
+                    ),
+                ],
+                spacing=4,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
 
         def _refresh_subtasks():
             db.refresh(task)
@@ -603,45 +627,6 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             except Exception:
                 pass
 
-        def _confirm_delete_subtask(sid: int, title: str):
-            """Show confirmation dialog before soft-deleting a subtask."""
-            confirm_msg.value = f'ต้องการลบ sub-task "{title}" ใช่ไหม?'
-            def _do():
-                task_svc.delete_subtask(sid)
-                _refresh_subtasks()
-            _confirm_fn["value"] = _do
-            confirm_dlg.open = True
-            safe_page_update(page)
-
-        def _subtask_row(st) -> ft.Row:
-            return ft.Row(
-                controls=[
-                    ft.Checkbox(
-                        value=st.is_done,
-                        fill_color=ACCENT,
-                        on_change=lambda e, sid=st.id: (
-                            task_svc.toggle_subtask(sid),
-                            _refresh_subtasks(),
-                        ),
-                    ),
-                    ft.Text(
-                        st.title, size=13,
-                        color=TEXT_SEC if st.is_done else TEXT_PRI,
-                        expand=True,
-                    ),
-                    ft.IconButton(
-                        icon=ft.Icons.CLOSE, icon_size=14,
-                        icon_color=TEXT_SEC,
-                        tooltip="ลบ sub-task",
-                        on_click=lambda e, sid=st.id, t=st.title: (
-                            _confirm_delete_subtask(sid, t)
-                        ),
-                    ),
-                ],
-                spacing=4,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            )
-
         def _add_subtask(e):
             text = (new_sub_tf.value or "").strip()
             if text:
@@ -651,32 +636,34 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 safe_page_update(page)
 
         _refresh_subtasks()
+        add_row = ft.Row(
+            controls=[
+                ft.Container(expand=True, content=new_sub_tf),
+                ft.IconButton(
+                    icon=ft.Icons.ADD_CIRCLE_OUTLINE,
+                    icon_color=ACCENT, icon_size=22,
+                    tooltip="เพิ่ม sub-task",
+                    on_click=_add_subtask,
+                ),
+            ],
+            spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        return subtask_col, add_row
 
-        # ── Comment section ───────────────────────────────────────
-        comment_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO)
+    def _build_comment_section(task) -> tuple:
+        """Returns (comment_col, comment_tf, send_btn)."""
+        comment_col    = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO)
         new_comment_tf = ft.TextField(
             hint_text="เพิ่ม comment...",
             multiline=True, min_lines=2, max_lines=4,
             border_color=BORDER, focused_border_color=ACCENT,
-            color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
-            text_size=13,
+            color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8, text_size=13,
         )
-
-        def _refresh_comments():
-            comments = task_svc.get_comments(task.id)
-            comment_col.controls = [_comment_bubble(c) for c in comments]
-            try:
-                if comment_col.page:
-                    comment_col.update()
-            except Exception:
-                pass
 
         def _comment_bubble(c) -> ft.Container:
             author_name = c.author.name if c.author else "ระบบ"
             return ft.Container(
-                bgcolor=BG_INPUT,
-                border_radius=8,
-                padding=10,
+                bgcolor=BG_INPUT, border_radius=8, padding=10,
                 content=ft.Column(
                     controls=[
                         ft.Row(
@@ -684,19 +671,15 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                                 ft.Container(
                                     width=24, height=24, border_radius=12,
                                     bgcolor=ACCENT + "44",
-                                    content=ft.Text(
-                                        author_name[0].upper(),
-                                        size=11, color=ACCENT,
-                                        text_align=ft.TextAlign.CENTER,
-                                    ),
+                                    content=ft.Text(author_name[0].upper(), size=11,
+                                                    color=ACCENT,
+                                                    text_align=ft.TextAlign.CENTER),
                                     alignment=ft.alignment.Alignment.CENTER,
                                 ),
-                                ft.Text(author_name, size=12,
-                                        color=ACCENT, weight=ft.FontWeight.W_500),
-                                ft.Text(
-                                    c.created_at.strftime("%d/%m %H:%M"),
-                                    size=11, color=TEXT_SEC,
-                                ),
+                                ft.Text(author_name, size=12, color=ACCENT,
+                                        weight=ft.FontWeight.W_500),
+                                ft.Text(c.created_at.strftime("%d/%m %H:%M"),
+                                        size=11, color=TEXT_SEC),
                             ],
                             spacing=6,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -707,6 +690,15 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 ),
             )
 
+        def _refresh_comments():
+            comment_col.controls = [_comment_bubble(c)
+                                    for c in task_svc.get_comments(task.id)]
+            try:
+                if comment_col.page:
+                    comment_col.update()
+            except Exception:
+                pass
+
         def _add_comment(e):
             body = (new_comment_tf.value or "").strip()
             if body:
@@ -716,8 +708,15 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 safe_page_update(page)
 
         _refresh_comments()
+        send_btn = ft.Button(
+            "ส่ง comment", bgcolor=ACCENT, color="#FFFFFF",
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
+            on_click=_add_comment,
+        )
+        return comment_col, new_comment_tf, send_btn
 
-        # ── Status change buttons ─────────────────────────────────
+    def _build_status_row(task) -> ft.Row:
+        """Status-change button row."""
         def _status_btn(s: str) -> ft.ElevatedButton:
             is_cur = task.status.value == s
             col    = status_color(s)
@@ -731,13 +730,11 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                 ),
                 on_click=lambda e, st=s: _change_status(task, st),
             )
+        return ft.Row(controls=[_status_btn(s) for s in STATUS_LIST],
+                      spacing=4, wrap=True)
 
-        status_row = ft.Row(
-            controls=[_status_btn(s) for s in STATUS_LIST],
-            spacing=4, wrap=True,
-        )
-
-        # ── C3: Time Tracking section ────────────────────────────
+    def _build_time_section(task) -> ft.Column:
+        """Time tracking section — timer toggle + manual log."""
         from app.services.time_tracking_service import TimeTrackingService
         time_svc = TimeTrackingService(db)
 
@@ -761,24 +758,27 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
         )
 
         def _fmt_minutes(m: int) -> str:
-            if m < 60:
-                return f"{m} นาที"
+            if m < 60: return f"{m} นาที"
             h, rem = divmod(m, 60)
             return f"{h} ชม. {rem} นาที" if rem else f"{h} ชม."
+
+        def _update_time_ui():
+            for ctrl in [timer_status_text, timer_total_text, time_log_col]:
+                try: ctrl.update()
+                except Exception: pass
 
         def _refresh_time_section():
             running = time_svc.is_running(task.id)
             total   = time_svc.get_total_minutes(task.id)
-            timer_total_text.value = f"รวม: {_fmt_minutes(total)}" if total else "ยังไม่มีบันทึก"
+            timer_total_text.value = (f"รวม: {_fmt_minutes(total)}"
+                                      if total else "ยังไม่มีบันทึก")
             if running:
                 log = time_svc.get_running_log(task.id)
                 timer_status_text.value = (
-                    f"⏱ กำลังบันทึก... (เริ่ม {log.started_at.strftime('%H:%M')})"
-                )
+                    f"⏱ กำลังบันทึก... (เริ่ม {log.started_at.strftime('%H:%M')})")
                 timer_status_text.color = "#22C55E"
             else:
                 timer_status_text.value = ""
-            # Recent logs (last 5)
             logs = time_svc.get_logs_by_task(task.id)[:5]
             time_log_col.controls = []
             for lg in logs:
@@ -801,50 +801,36 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                             ),
                         ),
                     ],
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ))
             _update_time_ui()
-
-        def _update_time_ui():
-            for ctrl in [timer_status_text, timer_total_text, time_log_col]:
-                try:
-                    ctrl.update()
-                except Exception:
-                    pass
 
         def _toggle_timer(e):
             if time_svc.is_running(task.id):
                 time_svc.stop_timer(task.id)
-                timer_toggle_btn.icon      = ft.Icons.PLAY_ARROW
+                timer_toggle_btn.icon       = ft.Icons.PLAY_ARROW
                 timer_toggle_btn.icon_color = ACCENT
-                timer_toggle_btn.tooltip   = "เริ่มบันทึก"
+                timer_toggle_btn.tooltip    = "เริ่มบันทึก"
             else:
                 time_svc.start_timer(task.id)
-                timer_toggle_btn.icon      = ft.Icons.STOP
+                timer_toggle_btn.icon       = ft.Icons.STOP
                 timer_toggle_btn.icon_color = "#EF4444"
-                timer_toggle_btn.tooltip   = "หยุดบันทึก"
-            try:
-                timer_toggle_btn.update()
-            except Exception:
-                pass
+                timer_toggle_btn.tooltip    = "หยุดบันทึก"
+            try: timer_toggle_btn.update()
+            except Exception: pass
             _refresh_time_section()
 
         def _add_manual(e):
-            try:
-                mins = int((manual_min_tf.value or "0").strip())
-            except ValueError:
-                mins = 0
+            try: mins = int((manual_min_tf.value or "0").strip())
+            except ValueError: mins = 0
             if mins > 0:
-                time_svc.add_manual_log(
-                    task.id, mins, note=manual_note_tf.value or "")
-                manual_min_tf.value  = ""
-                manual_note_tf.value = ""
+                time_svc.add_manual_log(task.id, mins,
+                                        note=manual_note_tf.value or "")
+                manual_min_tf.value = manual_note_tf.value = ""
                 try:
                     manual_min_tf.update()
                     manual_note_tf.update()
-                except Exception:
-                    pass
+                except Exception: pass
                 _refresh_time_section()
 
         _is_running_now = time_svc.is_running(task.id)
@@ -855,10 +841,9 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             tooltip="หยุดบันทึก" if _is_running_now else "เริ่มบันทึก",
             on_click=_toggle_timer,
         )
-
         _refresh_time_section()
 
-        time_section = ft.Column(
+        return ft.Column(
             controls=[
                 ft.Row(
                     controls=[
@@ -870,14 +855,10 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                timer_status_text,
-                timer_total_text,
-                time_log_col,
-                # Manual log row
+                timer_status_text, timer_total_text, time_log_col,
                 ft.Row(
                     controls=[
-                        manual_min_tf,
-                        manual_note_tf,
+                        manual_min_tf, manual_note_tf,
                         ft.IconButton(
                             icon=ft.Icons.ADD_CIRCLE_OUTLINE,
                             icon_color=ACCENT, icon_size=20,
@@ -885,49 +866,42 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                             on_click=_add_manual,
                         ),
                     ],
-                    spacing=6,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
             ],
             spacing=4,
         )
 
-        # ── Header ────────────────────────────────────────────────
+    def _build_detail_panel(task) -> ft.Container:
+        """Thin assembler — composes 4 focused sub-builders."""
+        subtask_col, subtask_add_row = _build_subtask_section(task)
+        comment_col, comment_tf, send_btn = _build_comment_section(task)
+        status_row  = _build_status_row(task)
+        time_section = _build_time_section(task)
         assignee_name = task.assignee.name if task.assignee else "ไม่ระบุ"
 
         return ft.Container(
-            expand=True,
-            padding=ft.padding.all(16),
-            bgcolor=BG_CARD,
+            expand=True, padding=ft.padding.all(16), bgcolor=BG_CARD,
             content=ft.Column(
                 controls=[
-                    # Title + close
                     ft.Row(
                         controls=[
                             ft.Text("รายละเอียดงาน", size=15,
                                     weight=ft.FontWeight.BOLD, color=TEXT_PRI),
                             ft.IconButton(
-                                icon=ft.Icons.CLOSE,
-                                icon_color=TEXT_SEC, icon_size=18,
+                                icon=ft.Icons.CLOSE, icon_color=TEXT_SEC, icon_size=18,
                                 on_click=lambda e: _close_detail(),
                             ),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     ),
                     ft.Divider(height=1, color=BORDER),
-
-                    # Task info
                     ft.Text(task.title, size=16,
                             weight=ft.FontWeight.BOLD, color=TEXT_PRI),
                     ft.Text(task.description or "ไม่มีคำอธิบาย",
                             size=13, color=TEXT_SEC),
-                    ft.Row(
-                        controls=[
-                            _status_chip(task.status.value),
-                            _priority_chip(task.priority.value),
-                        ],
-                        spacing=6,
-                    ),
+                    ft.Row(controls=[_status_chip(task.status.value),
+                                     _priority_chip(task.priority.value)], spacing=6),
                     ft.Row(
                         controls=[
                             ft.Icon(ft.Icons.PERSON_OUTLINE, color=TEXT_SEC, size=14),
@@ -936,62 +910,26 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                                     color=TEXT_SEC, size=14),
                             _due_label(task.due_date),
                         ],
-                        spacing=4,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-
-                    # ── Dependency info ─────────────────────────────
                     *_build_dependency_section(task),
-
-                    # Status change
                     ft.Text("เปลี่ยนสถานะ", size=12, color=TEXT_SEC),
                     status_row,
-
                     ft.Divider(height=1, color=BORDER),
-
-                    # C3: Time tracking
                     time_section,
-
                     ft.Divider(height=1, color=BORDER),
-
-                    # Sub-tasks
                     ft.Text("Sub-tasks", size=13,
                             weight=ft.FontWeight.W_500, color=TEXT_PRI),
                     subtask_col,
-                    ft.Row(
-                        controls=[
-                            ft.Container(expand=True, content=new_sub_tf),
-                            ft.IconButton(
-                                icon=ft.Icons.ADD_CIRCLE_OUTLINE,
-                                icon_color=ACCENT, icon_size=22,
-                                tooltip="เพิ่ม sub-task",
-                                on_click=_add_subtask,
-                            ),
-                        ],
-                        spacing=4,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-
+                    subtask_add_row,
                     ft.Divider(height=1, color=BORDER),
-
-                    # Comments
                     ft.Text("Comments", size=13,
                             weight=ft.FontWeight.W_500, color=TEXT_PRI),
-                    ft.Container(
-                        height=160,
-                        content=comment_col,
-                    ),
-                    new_comment_tf,
-                    ft.Button(
-                        "ส่ง comment",
-                        bgcolor=ACCENT, color="#FFFFFF",
-                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
-                        on_click=_add_comment,
-                    ),
+                    ft.Container(height=160, content=comment_col),
+                    comment_tf,
+                    send_btn,
                 ],
-                spacing=10,
-                scroll=ft.ScrollMode.AUTO,
-                expand=True,
+                spacing=10, scroll=ft.ScrollMode.AUTO, expand=True,
             ),
         )
 
@@ -1402,28 +1340,27 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
                             color=TEXT_PRI if is_active else TEXT_SEC),
         )
 
-    # Status filter row
-    status_filters = ft.Row(
-        controls=[
-            _filter_chip(ALL_FILTER, "status", filter_status,
-                         lambda: (_refresh_task_list_only(), _rebuild_filters())),
-            *[_filter_chip(s, "status", filter_status,
-                           lambda: (_refresh_task_list_only(), _rebuild_filters()))
-              for s in STATUS_LIST],
-        ],
-        spacing=6, wrap=False,
-    )
+    # ── Filter chip builders — single source of truth ───────────────
+    def _on_filter(): _refresh_task_list_only(); _rebuild_filters()
 
-    priority_filters = ft.Row(
-        controls=[
-            _filter_chip(ALL_FILTER, "priority", filter_priority,
-                         lambda: (_refresh_task_list_only(), _rebuild_filters())),
-            *[_filter_chip(p, "priority", filter_priority,
-                           lambda: (_refresh_task_list_only(), _rebuild_filters()))
-              for p in PRIORITY_LIST],
-        ],
-        spacing=6, wrap=False,
-    )
+    def _build_status_chips():
+        return [
+            _filter_chip(ALL_FILTER, "status", filter_status, _on_filter),
+            *[_filter_chip(s, "status", filter_status, _on_filter) for s in STATUS_LIST],
+        ]
+
+    def _build_priority_chips():
+        return [
+            _filter_chip(ALL_FILTER, "priority", filter_priority, _on_filter),
+            *[_filter_chip(p, "priority", filter_priority, _on_filter) for p in PRIORITY_LIST],
+        ]
+
+    def _build_sort_chips():
+        return [_filter_chip(o, "sort", sort_order, _on_filter) for o in SORT_OPTIONS]
+
+    status_filters   = ft.Row(controls=_build_status_chips(),   spacing=6, wrap=False)
+    priority_filters = ft.Row(controls=_build_priority_chips(), spacing=6, wrap=False)
+    sort_filters     = ft.Row(controls=_build_sort_chips(),     spacing=6, wrap=False)
 
     search_tf = ft.TextField(
         hint_text="ค้นหางาน...",
@@ -1436,15 +1373,6 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
             search_query.update({"value": e.control.value or ""}),
             _refresh_task_list_only(),
         ),
-    )
-
-    sort_filters = ft.Row(
-        controls=[
-            _filter_chip(o, "sort", sort_order,
-                         lambda: (_refresh_task_list_only(), _rebuild_filters()))
-            for o in SORT_OPTIONS
-        ],
-        spacing=6, wrap=False,
     )
 
     filter_col = ft.Column(
@@ -1482,29 +1410,9 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
 
     def _rebuild_filters():
         """Rebuild filter chips so active state re-renders."""
-        new_status_chips = [
-            _filter_chip(ALL_FILTER, "s", filter_status,
-                         lambda: (_refresh_task_list_only(), _rebuild_filters())),
-            *[_filter_chip(s, "s", filter_status,
-                           lambda: (_refresh_task_list_only(), _rebuild_filters()))
-              for s in STATUS_LIST],
-        ]
-        new_priority_chips = [
-            _filter_chip(ALL_FILTER, "p", filter_priority,
-                         lambda: (_refresh_task_list_only(), _rebuild_filters())),
-            *[_filter_chip(p, "p", filter_priority,
-                           lambda: (_refresh_task_list_only(), _rebuild_filters()))
-              for p in PRIORITY_LIST],
-        ]
-        new_sort_chips = [
-            _filter_chip(o, "sort", sort_order,
-                         lambda: (_refresh_task_list_only(), _rebuild_filters()))
-            for o in SORT_OPTIONS
-        ]
-        status_filters.controls   = new_status_chips
-        priority_filters.controls = new_priority_chips
-        sort_filters.controls     = new_sort_chips
-        # A4: show/hide clear button based on active filters
+        status_filters.controls   = _build_status_chips()
+        priority_filters.controls = _build_priority_chips()
+        sort_filters.controls     = _build_sort_chips()
         clear_filter_btn.visible  = _is_filtered()
         for ctrl in [status_filters, priority_filters, sort_filters, clear_filter_btn]:
             safe_update(ctrl)
@@ -1712,6 +1620,15 @@ def build_task_view(db: Session, page: ft.Page) -> ft.Control:
     shortcut_registry.register("esc",    _shortcut_esc)
     shortcut_registry.register("enter",  _shortcut_enter)
     shortcut_registry.register("ctrl_f", _shortcut_search)
+
+    # Auto-open detail panel for highlighted task (from global search)
+    if highlight_task_id is not None:
+        task_to_highlight = task_svc.get_task_or_none(highlight_task_id)
+        if task_to_highlight:
+            selected_task_id["value"] = task_to_highlight.id
+            detail_panel.content = _build_detail_panel(task_to_highlight)
+            detail_panel.visible = True
+            _refresh_task_list_only()
 
     return ft.Container(
         expand=True,

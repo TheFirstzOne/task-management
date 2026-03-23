@@ -100,7 +100,8 @@ D:\Task Management\
 │   │   ├── task_service.py          # TaskService — หลัก
 │   │   ├── team_service.py          # TeamService
 │   │   ├── diary_service.py         # DiaryService + export Word/PDF
-│   │   └── time_tracking_service.py # TimeTrackingService (start/stop/log)
+│   │   ├── time_tracking_service.py # TimeTrackingService (start/stop/log)
+│   │   └── auth_service.py          # AuthService — PBKDF2 hash, login, JWT-ready (Phase 19)
 │   ├── views/
 │   │   ├── main_layout.py           # Sidebar nav + fresh session per navigation
 │   │   ├── dashboard_view.py        # 4 matplotlib charts (background thread)
@@ -109,6 +110,9 @@ D:\Task Management\
 │   │   ├── calendar_view.py         # Calendar
 │   │   ├── summary_view.py          # Export Excel/PDF + time report
 │   │   ├── diary_view.py            # Job diary + export Word/PDF
+│   │   ├── login_view.py            # Split-panel login (Phase 19)
+│   │   ├── settings_view.py         # User management — admin only (Phase 19)
+│   │   └── account_view.py          # Profile + เปลี่ยนรหัสผ่าน (Phase 19)
 │   │   └── history_view.py          # Activity log
 │   └── utils/
 │       ├── theme.py                 # Color constants (Blue-White theme)
@@ -158,7 +162,7 @@ pytest tests/ -v
 pytest tests/ --cov=app --cov-report=term-missing
 ```
 
-**Current test count:** 173 tests, ทุกตัวผ่าน
+**Current test count:** 199 tests, ทุกตัวผ่าน
 
 ---
 
@@ -285,7 +289,36 @@ task_svc.get_comments(task_id)
 self.db.query(Task).filter(...)             # ห้าม — ใช้ self.task_repo แทน
 ```
 
-### 5.7 SQL COUNT แทน Python loop
+### 5.7 Phase 19 — Auth Pattern
+
+```python
+# ✅ ถูก — เก็บ current user ใน session store
+page.session.store.set("current_user", {
+    "id": user.id, "name": user.name,
+    "is_admin": user.is_admin, "username": user.username,
+})
+
+# ✅ ถูก — อ่านกลับ
+current = page.session.store.get("current_user") or {}
+is_admin = current.get("is_admin", False)
+
+# ✅ ถูก — logout
+page.session.store.remove("current_user")
+
+# ❌ ผิด — API นี้ไม่มีใน Flet 0.27.6
+page.session.set("current_user", ...)  # AttributeError!
+```
+
+**AuthService** (`app/services/auth_service.py`):
+- `hash_password(pwd)` → `"{salt}:{hash}"` (PBKDF2-SHA256, 260k iterations)
+- `verify_password(pwd, stored_hash)` → `bool`
+- `login(username, password)` → `User` หรือ raise `InvalidCredentialsError`
+- `create_admin(username, name, password)` → `User`
+- `has_any_login_user()` → `bool` (ใช้ใน first-run check)
+
+**Default admin** — สร้างอัตโนมัติเมื่อ DB ว่าง (username=`admin`, password=`admin`)
+
+### 5.8 SQL COUNT แทน Python loop
 ```python
 # ✅ ถูก
 from sqlalchemy import func
@@ -331,6 +364,24 @@ confirm_dialog(
 Views ทุกหน้าเป็น function ที่รับ `db, page` และ return `ft.Control`
 State จัดการผ่าน mutable dict หรือ list (`selected_task_id = {}`, `filter_status = {}`)
 
+### 6.4 Admin-only Nav Item Pattern
+ซ่อน nav item จาก non-admin ใน `build_nav_btn()` โดยใช้ `visible=`:
+
+```python
+# ใน build_nav_btn() — main_layout.py
+_is_admin = (page.session.store.get("current_user") or {}).get("is_admin", False)
+
+c = ft.Container(
+    ...
+    visible=True if key != "settings" else _is_admin,
+)
+
+# สำหรับ bottom-section button เฉพาะ admin:
+settings_btn = ft.Container(visible=_is_admin, ...)   # "จัดการ Users" — admin only
+account_btn  = ft.Container(visible=True, ...)         # "บัญชี" — ทุก user
+logout_btn   = ft.Container(visible=on_logout is not None, ...)
+```
+
 ---
 
 ## 7. Database Schema (สรุป)
@@ -339,7 +390,7 @@ State จัดการผ่าน mutable dict หรือ list (`selected_t
 |-------|------|---------|
 | `tasks` | `models/task.py` | มี `is_deleted`, `subtasks` rel, `dependencies` M2M |
 | `subtasks` | `models/task.py` | มี `is_deleted`, FK → tasks |
-| `users` | `models/user.py` | มี `is_deleted` |
+| `users` | `models/user.py` | มี `is_deleted`, `username`, `password_hash`, `is_admin` (Phase 19) |
 | `teams` | `models/team.py` | มี `is_deleted`, M2M กับ users |
 | `task_history` | `models/history.py` | log การเปลี่ยนแปลง |
 | `diary_entries` | `models/diary.py` | บันทึกประจำวัน |
@@ -353,7 +404,13 @@ State จัดการผ่าน mutable dict หรือ list (`selected_t
 
 | ข้อจำกัด | รายละเอียด |
 |---------|------------|
-| Flet version | 0.82 — ยังไม่รองรับ `TextDecoration.LINE_THROUGH` (strikethrough) |
+| Flet version | 0.27.6 (installed) — ยังไม่รองรับ `TextDecoration.LINE_THROUGH` (strikethrough) |
+| Flet Button API | `ElevatedButton` รับ label เป็น **positional arg แรก** — ห้ามใช้ `text=` keyword |
+| Flet Alignment | `ft.alignment.center` ไม่มีใน 0.27.6 — ใช้ `ft.Alignment(0, 0)` แทน |
+| Flet Session | `page.session.set()` ไม่มี — ใช้ `page.session.store.set()` / `.get()` / `.remove()` |
+| Flet TextField.focus() | เป็น coroutine — ห้ามเรียกตรงใน sync handler; ใช้ได้ใน `on_submit` event |
+| Flet ButtonStyle | ไม่รองรับ `shape=` และ `text_style=` ใน 0.27.6 — ใช้แค่ `bgcolor`, `color`, `padding` |
+| Flet Color ARGB | 8-digit hex ใช้รูปแบบ **ARGB** ไม่ใช่ RGBA — `#FFFFFF22` = เหลือง (A=FF,R=FF,G=FF,B=22) → ต้องใช้ `#33FFFFFF` (A=33, white 20%) |
 | Flet Image | ไม่รองรับ `data:image/png;base64,...` ใน `Image.src` บน desktop |
 | SQLAlchemy lazy-load | ห้าม access relationship attribute หลัง session ปิด หรือใน background thread |
 | Windows asyncio | `main.py` มี monkey-patch `_ProactorBasePipeTransport` ป้องกัน `WinError 10054` เมื่อปิดแอป |

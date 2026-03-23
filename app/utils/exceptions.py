@@ -55,3 +55,17 @@ class ValidationError(TaskFlowError):
     def __init__(self, message: str):
         super().__init__(message)
         self.message = message
+
+
+class InvalidCredentialsError(TaskFlowError):
+    """Raised when username or password is incorrect."""
+    def __init__(self):
+        super().__init__("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+
+
+class UnauthorizedError(TaskFlowError):
+    """Raised when the current user lacks permission for an action."""
+    def __init__(self, action: str = ""):
+        msg = f"ไม่มีสิทธิ์{': ' + action if action else ''}"
+        super().__init__(msg)
+        self.action = action
