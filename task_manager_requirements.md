@@ -1,15 +1,23 @@
-# Task Manager Desktop App — Requirements & Tech Stack
+# VindFlow — Requirements & Tech Stack
 
-> **Project:** Team Task Management Desktop Application  
-> **Platform:** Windows Desktop (Python Flet)  
-> **Version:** 1.0.0  
-> **Last Updated:** March 2026
+> **Project:** Team Task Management Desktop Application
+> **Platform:** Windows Desktop (Python Flet) + FastAPI Server (LAN)
+> **Version:** 2.1.0
+> **Last Updated:** April 2026
 
 ---
 
 ## 1. Project Overview
 
-Desktop application สำหรับจัดการงานและมอบหมายงานในทีม เน้นความเรียบง่าย ใช้งานได้ offline และรองรับทีมขนาดเล็กถึงกลาง
+Desktop application สำหรับจัดการงานและมอบหมายงานในทีม รองรับการทำงานแบบ **Online Multi-user** ผ่าน LAN
+ทุกเครื่องในทีมเชื่อมต่อมายัง FastAPI server กลาง ข้อมูลซิงค์กันแบบ real-time
+
+**สถาปัตยกรรมปัจจุบัน:**
+```
+เครื่อง A:  [Flet UI] → [HTTP Client] ──┐
+เครื่อง B:  [Flet UI] → [HTTP Client] ──┼──→ [FastAPI Server :8000] → [SQLite]
+เครื่อง C:  [Flet UI] → [HTTP Client] ──┘
+```
 
 ---
 
@@ -18,8 +26,8 @@ Desktop application สำหรับจัดการงานและมอ
 ### 2.1 ระบบสร้างทีมงาน
 - สร้าง แก้ไข ลบทีม
 - เพิ่ม/ลบสมาชิกในทีม
-- กำหนด Role และ Skill ของแต่ละคน เช่น Technician, Engineer, CNC, PLC, Hydraulic
-- แสดง Workload ของแต่ละคนในทีม เพื่อป้องกันงานกองเกิน
+- กำหนด Role และ Skill เช่น Technician, Engineer, CNC, PLC, Hydraulic
+- แสดง Workload ของแต่ละคน เพื่อป้องกันงานกองเกิน
 - เปิด/ปิดสถานะ Active ของสมาชิก
 
 ### 2.2 ระบบแจกจ่ายงาน
@@ -29,6 +37,7 @@ Desktop application สำหรับจัดการงานและมอ
 - แนบ Checklist ย่อย (Sub-tasks) ภายในงาน
 - ระบุ Tag หรือหมวดหมู่งาน
 - Visual indicator เมื่องานใกล้หรือเกิน Deadline
+- Recycle Bin — กู้คืนงานที่ลบแล้วได้ (Soft Delete)
 
 #### 2.2.2 มอบหมายงาน
 - มอบหมายงานให้สมาชิกในทีม
@@ -41,29 +50,45 @@ Desktop application สำหรับจัดการงานและมอ
 - Filter ตาม ทีม, สมาชิก, สถานะ, Priority
 - แสดง Deadline และช่วงเวลาของงานแต่ละชิ้น
 
-### 2.4 สรุปงาน (Text-based)
+### 2.4 สรุปงาน
 - สรุปงานทั้งหมดในรูปแบบ Text
 - กรองสรุปตามทีม, สมาชิก, ช่วงวันที่, สถานะ
 - Export รายงานเป็น PDF และ Excel
 - Dashboard ตัวเลขภาพรวม: งานเสร็จ / ค้าง / เกินกำหนด
+- สรุปเวลาทำงานแยกตามงาน และแยกตามสมาชิก
 
 ### 2.5 ประวัติการทำงาน
 - บันทึก Action Log ทุกการเปลี่ยนแปลงของงาน เช่น สร้าง, มอบหมาย, เปลี่ยน Status, Comment
 - ดูประวัติย้อนหลังรายงานแต่ละชิ้น
 - ค้นหาและ Filter ประวัติด้วยวันที่ หรือสมาชิก
 
+### 2.6 ระบบ Login & Auth (Phase 19)
+- Login ด้วย username / password
+- PBKDF2-SHA256 hashing (260,000 iterations)
+- Admin สร้าง/จัดการบัญชีผู้ใช้ทั้งหมด
+- แต่ละ user จัดการโปรไฟล์และเปลี่ยนรหัสผ่านตัวเองได้
+- Default admin: username=`admin`, password=`admin` (สร้างอัตโนมัติเมื่อ DB ว่าง)
+
+### 2.7 Online Multi-user (Phase 21)
+- ทุกเครื่องเชื่อมต่อ FastAPI server กลางผ่าน LAN
+- JWT token authentication (24 ชั่วโมง)
+- Swagger UI ที่ `/docs` สำหรับ developer
+- 52+ API endpoints ครอบคลุมทุก feature
+
 ---
 
 ## 3. Non-Functional Requirements
 
 | หัวข้อ | รายละเอียด |
-|---|---|
-| **Platform** | Windows Desktop (standalone .exe) |
-| **UI Theme** | Blue-White (ฟ้า-ขาว) ถาวร |
-| **Database** | Local SQLite (offline-first, ไม่ต้องการ server) |
+|--------|-----------|
+| **Platform** | Windows Desktop (.exe) + FastAPI Server |
+| **UI Theme** | Blue-White ถาวร |
+| **Database** | SQLite บน server กลาง (LAN) |
+| **Network** | Online-only ผ่าน LAN (ต้องเชื่อมต่อ server) |
 | **Performance** | เปิดแอปได้ภายใน 3 วินาที |
-| **Usability** | ใช้งานได้โดยไม่ต้องเชื่อมต่อ internet |
-| **Packaging** | Build เป็น .exe เพื่อแจกจ่ายในทีม |
+| **Security** | JWT Bearer token, PBKDF2 password hashing |
+| **Packaging** | Build เป็น .exe ด้วย PyInstaller แจกจ่ายในทีม |
+| **Server** | รัน `python server.py` บนเครื่องที่เปิดทิ้งไว้ |
 
 ---
 
@@ -72,123 +97,172 @@ Desktop application สำหรับจัดการงานและมอ
 ### 4.1 Core
 
 | Layer | Technology | หมายเหตุ |
-|---|---|---|
-| **UI Framework** | `Flet >= 0.21.0` | Python-based, Material Design, Cross-platform |
+|-------|-----------|---------|
+| **UI Framework** | `Flet 0.27.6` | Python-based, function-based views |
 | **Language** | `Python 3.10+` | |
-| **Database** | `SQLite` | Built-in กับ Python ไม่ต้องติดตั้งแยก |
-| **ORM** | `SQLAlchemy >= 2.0.0` | จัดการ database query แบบ Pythonic |
-| **DB Migration** | `Alembic >= 1.13.0` | จัดการ schema changes เมื่อ model เปลี่ยน |
+| **Database** | `SQLite` | บน server กลาง |
+| **ORM** | `SQLAlchemy 2.x` | จัดการ database query แบบ Pythonic |
+| **API Server** | `FastAPI 0.110+` | REST API สำหรับ multi-user |
+| **ASGI Server** | `uvicorn` | รัน FastAPI |
+| **HTTP Client** | `httpx` | Sync HTTP client บน desktop |
+| **Auth** | `python-jose[cryptography]` | JWT token |
 
 ### 4.2 Utilities
 
-| Package | Version | การใช้งาน |
-|---|---|---|
-| `python-dateutil` | >= 2.9.0 | จัดการวันที่และ timezone ซับซ้อน |
-| `openpyxl` | >= 3.1.0 | Export รายงานเป็น Excel (.xlsx) |
-| `reportlab` | >= 4.0.0 | Export รายงานเป็น PDF |
-| `python-docx` | >= 1.1.0 | Export บันทึกการทำงานเป็น Word (.docx) |
-| `matplotlib` | >= 3.7.0 | Dashboard charts (Donut, Bar, Line) |
+| Package | การใช้งาน |
+|---------|---------|
+| `openpyxl` | Export รายงานเป็น Excel (.xlsx) |
+| `reportlab` | Export รายงานเป็น PDF |
+| `python-docx` | Export บันทึกการทำงานเป็น Word (.docx) |
+| `matplotlib` | Dashboard charts (Donut, Bar, Line) |
+| `python-dateutil` | จัดการวันที่และ timezone |
 
 ### 4.3 Development Tools
 
 | Tool | การใช้งาน |
-|---|---|
-| `venv` | Virtual Environment แยก dependencies |
-| `PyInstaller` | Build เป็น .exe สำหรับ Windows |
-| `pytest >= 9.0.0` | Unit test runner |
-| `pytest-cov >= 7.0.0` | Code coverage report |
+|------|---------|
+| `venv` | Virtual Environment |
+| `PyInstaller` | Build เป็น .exe |
+| `pytest` | Unit test runner (199 tests) |
+| `pytest-cov` | Code coverage report |
 
 ---
 
 ## 5. Architecture
 
 ```
-task_manager/
-├── main.py                  # Entry point
+D:\Task Management\
+├── main.py                          # Desktop client entry point
+├── server.py                        # FastAPI server entry point (port 8000)
+│
+├── server/                          # FastAPI server package
+│   ├── main.py                      # FastAPI app + CORS + routers
+│   ├── auth.py                      # JWT: create_token, verify_token
+│   ├── deps.py                      # get_db(), get_current_user()
+│   ├── serializers.py               # ORM → dict converters
+│   └── routers/
+│       ├── auth.py                  # POST /auth/login
+│       ├── tasks.py                 # /api/tasks (CRUD + subtasks + comments)
+│       ├── subtasks.py              # /api/subtasks
+│       ├── teams.py                 # /api/teams + /api/members
+│       ├── users.py                 # /api/users (admin ops)
+│       ├── diary.py                 # /api/diary + export
+│       ├── history.py               # /api/history
+│       ├── dashboard.py             # /api/dashboard/stats
+│       └── summary.py               # /api/summary + export excel
+│
 ├── app/
-│   ├── database.py          # DB connection & session
-│   ├── models/              # SQLAlchemy models
-│   │   ├── user.py
-│   │   ├── team.py
-│   │   ├── task.py
-│   │   ├── history.py
-│   │   ├── diary.py         # Phase 11: บันทึกการทำงานรายวัน
-│   │   └── time_log.py      # Phase 13: Time Tracking
-│   ├── repositories/        # Database CRUD operations
+│   ├── database.py                  # engine, SessionLocal, init_db()
+│   ├── client/                      # HTTP client layer (desktop-side)
+│   │   ├── __init__.py
+│   │   ├── config.py                # SERVER_URL = "http://192.168.x.x:8000"
+│   │   └── api_client.py            # APIClient — 50+ methods ครอบคลุมทุก endpoint
+│   ├── models/
+│   │   ├── task.py                  # Task, SubTask, TaskComment
+│   │   ├── user.py                  # User (+ username, password_hash, is_admin)
+│   │   ├── team.py                  # Team
+│   │   ├── history.py               # HistoryLog
+│   │   ├── diary.py                 # DiaryEntry
+│   │   └── time_log.py              # TimeLog
+│   ├── repositories/
+│   │   ├── base.py
+│   │   ├── task_repo.py
 │   │   ├── user_repo.py
 │   │   ├── team_repo.py
-│   │   ├── task_repo.py
-│   │   └── diary_repo.py    # Phase 11
-│   ├── services/            # Business logic
-│   │   ├── team_service.py
+│   │   ├── diary_repo.py
+│   │   └── time_log_repo.py
+│   ├── services/
 │   │   ├── task_service.py
-│   │   ├── diary_service.py # Phase 11
-│   │   └── time_tracking_service.py  # Phase 13: Timer + Manual log
-│   ├── views/               # Flet UI components
-│   │   ├── main_layout.py
-│   │   ├── dashboard_view.py # Phase 13: Charts + Stat cards
-│   │   ├── team_view.py
-│   │   ├── task_view.py
-│   │   ├── calendar_view.py
-│   │   ├── diary_view.py    # Phase 11: บันทึกการทำงานรายวัน
-│   │   ├── summary_view.py
-│   │   └── history_view.py
-│   └── utils/               # Helpers, exporters
-│       ├── theme.py
-│       ├── date_helpers.py
-│       ├── logger.py        # Phase 12: Centralized logging
-│       ├── exceptions.py    # Phase 12: Custom exception hierarchy
-│       └── ui_helpers.py    # Phase 12: show_snack, confirm_dialog, show_loading
-├── tests/                   # Phase 12: Unit test suite (27 tests)
+│   │   ├── team_service.py
+│   │   ├── diary_service.py
+│   │   ├── time_tracking_service.py
+│   │   └── auth_service.py          # PBKDF2 hash, login, JWT-ready
+│   ├── views/
+│   │   ├── main_layout.py           # Sidebar nav + APIClient per navigation
+│   │   ├── login_view.py            # Split-panel login (Phase 19)
+│   │   ├── dashboard_view.py        # 4 matplotlib charts
+│   │   ├── task_view.py             # Task list + recycle bin
+│   │   ├── team_view.py             # Team CRUD
+│   │   ├── calendar_view.py         # Calendar
+│   │   ├── summary_view.py          # Export Excel/PDF + time report
+│   │   ├── diary_view.py            # Job diary + export Word/PDF
+│   │   ├── history_view.py          # Activity log
+│   │   ├── settings_view.py         # User management — admin only (Phase 19)
+│   │   └── account_view.py          # Profile + เปลี่ยนรหัสผ่าน (Phase 19)
+│   └── utils/
+│       ├── theme.py                 # Color constants (Blue-White)
+│       ├── exceptions.py            # Custom exception hierarchy
+│       ├── logger.py                # Rotating file logger
+│       ├── ui_helpers.py            # show_snack, confirm_dialog
+│       ├── date_helpers.py          # Thai date utilities
+│       └── shortcut_registry.py    # Keyboard shortcut registry
+│
+├── tests/                           # 199 tests — ทุกตัวผ่าน
 │   ├── conftest.py
 │   ├── test_task_service.py
+│   ├── test_task_service_phase16.py
+│   ├── test_team_service.py
+│   ├── test_time_tracking_service.py
+│   ├── test_task_repository.py
+│   ├── test_time_log_repository.py
+│   ├── test_dashboard_stats.py
 │   ├── test_diary_service.py
+│   ├── test_auth_service.py
+│   ├── test_shortcut_registry.py
 │   └── test_exceptions.py
-├── assets/
-├── data/                    # SQLite file + Word export + taskflow.log
-└── requirements.txt
+│
+└── data/
+    ├── task_manager.db              # SQLite database (บน server)
+    ├── charts/                      # PNG จาก matplotlib
+    └── taskflow.log                 # Application log (rotating)
 ```
 
-**Pattern:** Repository Pattern + Service Layer  
-**Data Flow:** `Views → Services → Repositories → SQLite`
+**Pattern:** Repository → Service → FastAPI Router → HTTP Client → Flet UI
+**Data Flow:** `Views → APIClient → FastAPI → Services → Repositories → SQLite`
 
 ---
 
-## 6. Database Schema (ภาพรวม)
+## 6. Database Schema
 
-```
-users ──────┐
-            ├──► tasks ──► task_comments
-teams ──────┘         └──► work_history
-```
-
-| Table | คำอธิบาย |
-|---|---|
-| `users` | ข้อมูลสมาชิกทีม, role, skills |
+| ตาราง | คำอธิบาย |
+|-------|---------|
+| `users` | สมาชิกทีม, role, skills, username, password_hash, is_admin |
 | `teams` | ข้อมูลทีม |
-| `tasks` | งานหลัก พร้อม status, priority, deadline |
-| `task_comments` | Comment/Note ต่องานแบบ timeline |
+| `tasks` | งานหลัก พร้อม status, priority, deadline, soft-delete |
+| `subtasks` | งานย่อย FK → tasks |
+| `task_comments` | Comment/Note แบบ timeline |
 | `work_history` | Action log ทุกการเปลี่ยนแปลง |
-| `diary_entries` | บันทึกการทำงานรายวัน (Phase 11) |
-| `time_logs` | บันทึกเวลาทำงานต่องาน (Phase 13) |
+| `diary_entries` | บันทึกการทำงานรายวัน |
+| `time_logs` | บันทึกเวลาทำงานต่องาน (started_at, ended_at, duration_minutes) |
 
 ---
 
-## 7. Installation
+## 7. Installation & Running
 
+### Server (รันบนเครื่องที่เปิดทิ้งไว้)
 ```bash
-# 1. สร้าง Virtual Environment
 python -m venv venv
 venv\Scripts\activate
-
-# 2. ติดตั้ง dependencies
 pip install -r requirements.txt
+python server.py          # FastAPI on 0.0.0.0:8000
+```
 
-# 3. รันแอป
+### Client (รันทุกเครื่องในทีม)
+```bash
+# 1. แก้ IP ใน app/client/config.py
+SERVER_URL = "http://192.168.x.x:8000"   # ← ipconfig บนเครื่อง server
+
+# 2. รันแอป
 python main.py
+```
 
-# 4. Build เป็น .exe (เมื่อพร้อม deploy)
-flet pack main.py --name "Task Manager"
+### ตรวจสอบการเชื่อมต่อ
+เปิด browser → `http://192.168.x.x:8000/docs` → เห็น Swagger UI = ✅
+
+### รัน Tests
+```bash
+pytest tests/ -v                    # ทั้งหมด (199 tests)
+pytest tests/ --cov=app             # พร้อม coverage
 ```
 
 ---
@@ -196,56 +270,23 @@ flet pack main.py --name "Task Manager"
 ## 8. Development Roadmap
 
 | Phase | สิ่งที่ทำ | สถานะ |
-|---|---|---|
+|-------|---------|-------|
 | **Phase 1** | Core setup: DB, Models, Repositories | ✅ Done |
 | **Phase 2** | Team Management UI | ✅ Done |
 | **Phase 3** | Task Creation & Assignment UI | ✅ Done |
 | **Phase 4** | Calendar View | ✅ Done |
 | **Phase 5** | Summary & Export | ✅ Done |
 | **Phase 6** | History & Search | ✅ Done |
-| **Phase 7** | Bug Fix & QA Testing + Task Dependencies | ✅ Done |
+| **Phase 7** | Bug Fix & QA + Task Dependencies | ✅ Done |
 | **Phase 8** | Build & Package (.exe) | ✅ Done |
 | **Phase 9** | Environment Recovery & UI Color Fix | ✅ Done |
 | **Phase 10** | Blue-White Theme | ✅ Done |
-| **Phase 11** | JobDiary Integration + Export PDF/Excel Blue-White Theme + Thai Font Fix | ✅ Done |
-| **Phase 12** | Code Quality & Architecture Hardening + UX Polish + Diary PDF Export | ✅ Done |
-| **Phase 13** | UX/UI Professional Polish + Dashboard Charts + Time Tracking | ✅ Done |
-| **Phase 14** | Architecture Review & Code Quality (Session mgmt, Validation, UTC fix, SQL COUNT, Tests 103) | ✅ Done |
-| **Phase 15** | เลือกไฟล์ Database จากไดร์ฟกลาง (Shared SQLite + WAL + retry) | 🔜 Planned |
-| **Phase 16** | ระบบล็อกอิน (Admin สร้างบัญชี / Member login) | 🔜 Planned |
-| **Phase 17** | พิจารณา Web App Migration (Flet Web / FastAPI + React) | 🔜 Planned |
-
----
-
-## Phase 13 — UX/UI Professional Polish + Dashboard Charts + Time Tracking (Planned)
-
-### Part A — UX/UI Polish (ทำก่อน)
-
-| # | รายการ | ความยาก | ไฟล์ที่เกี่ยวข้อง |
-|---|--------|---------|-----------------|
-| A1 | **Priority color border** บนซ้าย task card (Urgent=แดง, High=ส้ม, Medium=เหลือง, Low=เขียว) | ⭐ | `task_view.py` |
-| A2 | **Hover แสดง action buttons** (Edit/Delete ซ่อน แสดงเมื่อ hover บนการ์ด) | ⭐⭐ | `task_view.py` |
-| A3 | **Done/Cancelled visual** (opacity ลด + title strikethrough) | ⭐ | `task_view.py` |
-| A4 | **ปุ่ม "ล้างตัวกรอง"** (แสดงเมื่อ filter ≠ ทั้งหมด ทุกตัว) | ⭐ | `task_view.py` |
-| A5 | **Empty state เมื่อ filter ไม่พบผล** ("ไม่พบงานที่ตรงกับเงื่อนไข" + ปุ่ม clear) | ⭐ | `task_view.py` |
-| A6 | **Form dialog grouping** (แบ่ง 2 section: ข้อมูลหลัก / รายละเอียดเพิ่มเติม) | ⭐⭐ | `task_view.py` |
-
-### Part B — Dashboard Charts (#7)
-
-| # | รายการ | รายละเอียด |
-|---|--------|----------|
-| B1 | **Status Donut Chart** | งานแยกตามสถานะ (Pie/Donut) — ใช้ `flet_contrib` หรือ `matplotlib` render เป็น image |
-| B2 | **Priority Bar Chart** | งานแยกตาม Priority (Horizontal bar) |
-| B3 | **Weekly Trend Line** | งานที่สร้าง vs เสร็จรายสัปดาห์ (Line chart) |
-| B4 | **Team Workload Chart** | งานต่อทีม/สมาชิก (Stacked bar) |
-| เทคโนโลยี | **matplotlib → PNG → ft.Image** | render chart เป็น BytesIO buffer แสดงใน `ft.Image` — ไม่ต้องติดตั้ง lib เพิ่ม |
-
-### Part C — Time Tracking (#13)
-
-| # | รายการ | รายละเอียด |
-|---|--------|----------|
-| C1 | **Model** | เพิ่มตาราง `time_logs` (id, task_id, user_id, started_at, ended_at, duration_minutes, note) |
-| C2 | **Service** | `TimeTrackingService`: start/stop timer, manual log, get_logs_by_task, get_summary_by_member |
-| C3 | **UI บน Task Detail Panel** | Timer button (▶ Start / ⏹ Stop) + รายการ time logs ของงานนั้น |
-| C4 | **รายงาน Time** | ตารางสรุปเวลา/งาน/สมาชิก ในหน้า Summary (แยก tab หรือ section) |
-| C5 | **Export** | เพิ่ม time log ใน Excel/PDF ของ summary export |
+| **Phase 11** | JobDiary Integration + Export PDF/Word | ✅ Done |
+| **Phase 12** | Code Quality & Architecture Hardening | ✅ Done |
+| **Phase 13** | Dashboard Charts + Time Tracking | ✅ Done |
+| **Phase 14** | Architecture Review (Session, UTC, SQL COUNT, 103 tests) | ✅ Done |
+| **Phase 15** | Dashboard Cache + Parallel Chart Rendering | ✅ Done |
+| **Phase 16** | Repository & Service Hardening (199 tests) | ✅ Done |
+| **Phase 17** | Global Search + Keyboard Shortcuts | ✅ Done |
+| **Phase 19** | Login System (PBKDF2, Admin UI, Account Page) | ✅ Done |
+| **Phase 21** | Online Desktop App (FastAPI + HTTP Client, LAN multi-user) | ✅ Done |
