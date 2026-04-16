@@ -16,6 +16,7 @@ NAV_ITEMS = [
     ("team",      ft.Icons.GROUP_OUTLINED,            "ทีมงาน"),
     ("task",      ft.Icons.TASK_ALT_OUTLINED,         "งาน"),
     ("calendar",  ft.Icons.CALENDAR_MONTH_OUTLINED,   "ปฏิทิน"),
+    ("milestone", ft.Icons.FLAG_OUTLINED,             "Milestone"),
     ("diary",     ft.Icons.BOOK_OUTLINED,             "บันทึกงาน"),
     ("summary",   ft.Icons.SUMMARIZE_OUTLINED,        "สรุปงาน"),
     ("history",   ft.Icons.HISTORY_OUTLINED,          "ประวัติ"),
@@ -62,8 +63,9 @@ def build_main_layout(page: ft.Page, on_logout: callable = None, api=None) -> ft
         from app.views.diary_view     import build_diary_view
         from app.views.summary_view   import build_summary_view
         from app.views.history_view   import build_history_view
-        from app.views.settings_view  import build_settings_view
-        from app.views.account_view   import build_account_view
+        from app.views.settings_view   import build_settings_view
+        from app.views.account_view    import build_account_view
+        from app.views.milestone_view  import build_milestone_view
 
         # Clear per-view shortcuts before building new view
         shortcut_registry.clear()
@@ -79,6 +81,7 @@ def build_main_layout(page: ft.Page, on_logout: callable = None, api=None) -> ft
             "team":      lambda: build_team_view(api, page),
             "task":      lambda: build_task_view(api, page, highlight_task_id=highlight_id),
             "calendar":  lambda: build_calendar_view(api, page),
+            "milestone": lambda: build_milestone_view(api, page, navigate_fn=navigate),
             "diary":     lambda: build_diary_view(api, page),
             "summary":   lambda: build_summary_view(api, page),
             "history":   lambda: build_history_view(api, page),

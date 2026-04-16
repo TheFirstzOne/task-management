@@ -181,18 +181,24 @@ def build_summary_view(api, page: ft.Page) -> ft.Control:
         return rows
 
     def _per_member_rows(tasks: List[dict]):
-        """Return list of (name, team_name, total, done, overdue)."""
+        """Return list of (name, team_name, total, done, overdue, subtasks)."""
         users = _get_all_members_dedup()
         rows = []
         for u in users:
             uid = u["id"]
             ut = [t for t in tasks if t.get("assignee_id") == uid]
-            if not ut:
+            # Count subtasks assigned to this member
+            st_count = sum(
+                1 for t in tasks
+                for st in t.get("subtasks", [])
+                if st.get("assignee_id") == uid and not st.get("is_deleted")
+            )
+            if not ut and not st_count:
                 continue
             done = sum(1 for t in ut if t.get("status") == "Done")
             ov   = sum(1 for t in ut if _is_overdue(t))
             team_name = u.get("team_name") or "—"
-            rows.append((u["name"], team_name, len(ut), done, ov))
+            rows.append((u["name"], team_name, len(ut), done, ov, st_count))
         return rows
 
     # ══════════════════════════════════════════════════════════════
@@ -312,11 +318,14 @@ def build_summary_view(api, page: ft.Page) -> ft.Control:
             spacing=4,
         )
 
-    def _table_row(*vals, highlight_last_red: bool = False) -> ft.Container:
+    def _table_row(*vals, highlight_last_red: bool = False,
+                   highlight_col_red: int = None) -> ft.Container:
         cells = []
         for i, v in enumerate(vals):
             color = TEXT_PRI
             if highlight_last_red and i == len(vals) - 1 and int(v) > 0:
+                color = COLOR_OVERDUE
+            elif highlight_col_red is not None and i == highlight_col_red and int(v) > 0:
                 color = COLOR_OVERDUE
             cells.append(
                 ft.Container(
@@ -421,12 +430,13 @@ def build_summary_view(api, page: ft.Page) -> ft.Control:
         # ── Per-member table ────────────────────────────────────
         member_rows = _per_member_rows(tasks)
         member_rows_ctrl = [
-            _table_header("ชื่อ", "ทีม", "งานทั้งหมด", "เสร็จแล้ว", "เกินกำหนด"),
+            _table_header("ชื่อ", "ทีม", "งานทั้งหมด", "เสร็จแล้ว", "เกินกำหนด", "Sub-tasks"),
         ]
         if member_rows:
             for r in member_rows:
+                # highlight col index 4 (overdue) red; col 5 (sub-tasks) is default
                 member_rows_ctrl.append(
-                    _table_row(*r, highlight_last_red=True)
+                    _table_row(*r, highlight_col_red=4)
                 )
         else:
             member_rows_ctrl.append(

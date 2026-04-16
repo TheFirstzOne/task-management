@@ -134,8 +134,25 @@ class APIClient:
         return self._post(f"/api/tasks/{task_id}/restore")
 
     # Subtasks
-    def add_subtask(self, task_id: int, title: str) -> dict:
-        return self._post(f"/api/tasks/{task_id}/subtasks", {"title": title})
+    def add_subtask(self, task_id: int, title: str,
+                    due_date=None, assignee_id: int = None) -> dict:
+        body: dict = {"title": title}
+        if due_date is not None:
+            body["due_date"] = (due_date.isoformat()
+                                if hasattr(due_date, "isoformat") else str(due_date))
+        if assignee_id is not None:
+            body["assignee_id"] = assignee_id
+        return self._post(f"/api/tasks/{task_id}/subtasks", body)
+
+    def update_subtask(self, subtask_id: int, title: str,
+                       due_date=None, assignee_id: int = None) -> dict:
+        body: dict = {
+            "title": title,
+            "due_date": (due_date.isoformat()
+                         if due_date and hasattr(due_date, "isoformat") else None),
+            "assignee_id": assignee_id,
+        }
+        return self._patch(f"/api/subtasks/{subtask_id}", body)
 
     def toggle_subtask(self, subtask_id: int) -> dict:
         return self._patch(f"/api/subtasks/{subtask_id}/toggle")
@@ -274,3 +291,38 @@ class APIClient:
 
     def export_summary_excel(self) -> bytes:
         return self._download("/api/summary/export/excel")
+
+    # ── Milestones ─────────────────────────────────────────────────────────
+    def get_milestones(self) -> list[dict]:
+        return self._get("/api/milestones")
+
+    def get_milestone(self, milestone_id: int) -> dict:
+        return self._get(f"/api/milestones/{milestone_id}")
+
+    def create_milestone(self, name: str, description: str = "", due_date=None) -> dict:
+        body: dict = {"name": name, "description": description}
+        if due_date is not None:
+            body["due_date"] = due_date.isoformat() if hasattr(due_date, "isoformat") else str(due_date)
+        return self._post("/api/milestones", body)
+
+    def update_milestone(self, milestone_id: int, **kwargs) -> dict:
+        body = {}
+        for k, v in kwargs.items():
+            if v is not None and hasattr(v, "isoformat"):
+                body[k] = v.isoformat()
+            else:
+                body[k] = v
+        return self._patch(f"/api/milestones/{milestone_id}", body)
+
+    def delete_milestone(self, milestone_id: int) -> None:
+        self._delete(f"/api/milestones/{milestone_id}")
+
+    def assign_task_to_milestone(self, milestone_id: int, task_id: int) -> dict:
+        return self._post(f"/api/milestones/{milestone_id}/tasks/{task_id}", {})
+
+    def remove_task_from_milestone(self, milestone_id: int, task_id: int) -> None:
+        self._delete(f"/api/milestones/{milestone_id}/tasks/{task_id}")
+
+    # ── Dashboard Heatmap ──────────────────────────────────────────────────
+    def get_workload_heatmap(self) -> dict:
+        return self._get("/api/dashboard/workload-heatmap")

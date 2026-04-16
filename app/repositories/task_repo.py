@@ -193,9 +193,25 @@ class TaskRepository(BaseRepository[Task]):
         )
 
     # ── SubTask ───────────────────────────────────────────────────
-    def add_subtask(self, task_id: int, title: str) -> SubTask:
-        subtask = SubTask(task_id=task_id, title=title)
+    def add_subtask(self, task_id: int, title: str,
+                    due_date: Optional[datetime] = None,
+                    assignee_id: Optional[int] = None) -> SubTask:
+        subtask = SubTask(task_id=task_id, title=title,
+                          due_date=due_date, assignee_id=assignee_id)
         self.db.add(subtask)
+        self.db.commit()
+        self.db.refresh(subtask)
+        return subtask
+
+    def update_subtask(self, subtask_id: int, **kwargs) -> Optional[SubTask]:
+        subtask = (self.db.query(SubTask)
+                   .filter(SubTask.id == subtask_id, SubTask.is_deleted == False)  # noqa: E712
+                   .first())
+        if not subtask:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(subtask, key):
+                setattr(subtask, key, value)
         self.db.commit()
         self.db.refresh(subtask)
         return subtask

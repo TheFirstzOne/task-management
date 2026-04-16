@@ -274,8 +274,16 @@ class TaskService:
         return task
 
     # ── SubTasks ──────────────────────────────────────────────────
-    def add_subtask(self, task_id: int, title: str):
-        return self.task_repo.add_subtask(task_id, title)
+    def add_subtask(self, task_id: int, title: str,
+                    due_date=None, assignee_id: Optional[int] = None):
+        return self.task_repo.add_subtask(task_id, title,
+                                          due_date=due_date, assignee_id=assignee_id)
+
+    def update_subtask(self, subtask_id: int, **kwargs):
+        subtask = self.task_repo.update_subtask(subtask_id, **kwargs)
+        if subtask is None:
+            raise NotFoundError("SubTask", subtask_id)
+        return subtask
 
     def toggle_subtask(self, subtask_id: int):
         return self.task_repo.toggle_subtask(subtask_id)
@@ -308,6 +316,63 @@ class TaskService:
             .limit(limit)
             .all()
         )
+
+    def get_workload_heatmap(self, weeks: int = 6) -> dict:
+        """
+        คืนค่าข้อมูล heatmap สำหรับ Dashboard:
+        {
+            "users":  ["สมชาย", ...],       # max 8 คน (เรียงตามงานมากสุด)
+            "weeks":  ["2026-W14", ...],     # 6 สัปดาห์ล่าสุด
+            "data":   [[3, 1, 0, ...], ...]  # rows=users, cols=weeks
+        }
+        นับ task ที่ active (ไม่ใช่ Done/Cancelled) ที่มี due_date ในสัปดาห์นั้น
+        """
+        from datetime import timedelta
+        from collections import defaultdict
+
+        today = datetime.now().date()
+        week_starts = [today - timedelta(weeks=weeks - 1 - i) for i in range(weeks)]
+        week_labels = [d.strftime("%Y-W%W") for d in week_starts]
+        week_set = set(week_labels)
+
+        tasks = self.task_repo.get_all()
+        active = [
+            t for t in tasks
+            if t.status and t.status.value not in ("Done", "Cancelled")
+        ]
+
+        counter: dict = defaultdict(lambda: defaultdict(int))
+        for t in active:
+            if t.due_date and t.assignee:
+                wk = t.due_date.strftime("%Y-W%W")
+                if wk in week_set:
+                    counter[t.assignee.name][wk] += 1
+
+        # also count active sub-tasks (not done, not deleted) with due_date + assignee
+        from app.models.task import SubTask
+        active_subtasks = (
+            self.db.query(SubTask)
+            .filter(
+                SubTask.is_deleted == False,   # noqa: E712
+                SubTask.is_done == False,       # noqa: E712
+                SubTask.due_date.isnot(None),
+                SubTask.assignee_id.isnot(None),
+            )
+            .all()
+        )
+        for st in active_subtasks:
+            if st.assignee and st.due_date:
+                wk = st.due_date.strftime("%Y-W%W")
+                if wk in week_set:
+                    counter[st.assignee.name][wk] += 1
+
+        # top 8 users by total task count
+        top_users = sorted(
+            counter, key=lambda u: sum(counter[u].values()), reverse=True
+        )[:8]
+        data = [[counter[u].get(wk, 0) for wk in week_labels] for u in top_users]
+
+        return {"users": top_users, "weeks": week_labels, "data": data}
 
     def get_dashboard_stats(self) -> DashboardStats:
         """Return task counts using SQL COUNT queries — avoids loading all rows."""

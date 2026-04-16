@@ -2,7 +2,7 @@
 
 > **Project:** Team Task Management Desktop Application
 > **Platform:** Windows Desktop (Python Flet) + FastAPI Server (LAN)
-> **Version:** 2.1.0
+> **Version:** 2.3.0
 > **Last Updated:** April 2026
 
 ---
@@ -45,6 +45,13 @@ Desktop application สำหรับจัดการงานและมอ
 - รองรับ Task Dependencies (ระบุว่างานไหนต้องทำก่อน)
 - บันทึก Comment / Note ต่องานแบบ Timeline
 
+#### 2.2.3 Sub-task Fields (Phase 23)
+- กำหนด Due Date แยกต่างหากสำหรับแต่ละ Sub-task
+- มอบหมาย Sub-task ให้สมาชิกในทีม (เฉพาะทีมเดียวกับงานหลัก)
+- แสดง Assignee + Due Date แบบ inline ข้างๆ ชื่อ Sub-task
+- Auto-fill ค่า Due Date และ Assignee จาก Task หลักเมื่อสร้าง Sub-task ใหม่
+- แก้ไข Sub-task ผ่าน popup (ชื่องาน / วันครบกำหนด / ผู้รับผิดชอบ)
+
 ### 2.3 ปฏิทินแผนงาน
 - แสดงงานและการมอบหมายในรูปแบบ Calendar View
 - Filter ตาม ทีม, สมาชิก, สถานะ, Priority
@@ -57,23 +64,30 @@ Desktop application สำหรับจัดการงานและมอ
 - Dashboard ตัวเลขภาพรวม: งานเสร็จ / ค้าง / เกินกำหนด
 - สรุปเวลาทำงานแยกตามงาน และแยกตามสมาชิก
 
-### 2.5 ประวัติการทำงาน
+### 2.5 Milestone Management (Phase 22)
+- สร้าง / แก้ไข / ลบ Milestone (Soft Delete)
+- กำหนด Due Date ให้ Milestone
+- มอบหมายงานเข้า Milestone และถอดออกได้
+- Progress bar แสดงความคืบหน้า (Done tasks / total tasks)
+- แสดง Task chips พร้อมสถานะภายใน Milestone card
+
+### 2.6 ประวัติการทำงาน
 - บันทึก Action Log ทุกการเปลี่ยนแปลงของงาน เช่น สร้าง, มอบหมาย, เปลี่ยน Status, Comment
 - ดูประวัติย้อนหลังรายงานแต่ละชิ้น
 - ค้นหาและ Filter ประวัติด้วยวันที่ หรือสมาชิก
 
-### 2.6 ระบบ Login & Auth (Phase 19)
+### 2.7 ระบบ Login & Auth (Phase 19)
 - Login ด้วย username / password
 - PBKDF2-SHA256 hashing (260,000 iterations)
 - Admin สร้าง/จัดการบัญชีผู้ใช้ทั้งหมด
 - แต่ละ user จัดการโปรไฟล์และเปลี่ยนรหัสผ่านตัวเองได้
 - Default admin: username=`admin`, password=`admin` (สร้างอัตโนมัติเมื่อ DB ว่าง)
 
-### 2.7 Online Multi-user (Phase 21)
+### 2.8 Online Multi-user (Phase 21)
 - ทุกเครื่องเชื่อมต่อ FastAPI server กลางผ่าน LAN
 - JWT token authentication (24 ชั่วโมง)
 - Swagger UI ที่ `/docs` สำหรับ developer
-- 52+ API endpoints ครอบคลุมทุก feature
+- 60+ API endpoints ครอบคลุมทุก feature
 
 ---
 
@@ -123,7 +137,7 @@ Desktop application สำหรับจัดการงานและมอ
 |------|---------|
 | `venv` | Virtual Environment |
 | `PyInstaller` | Build เป็น .exe |
-| `pytest` | Unit test runner (199 tests) |
+| `pytest` | Unit test runner (229 tests) |
 | `pytest-cov` | Code coverage report |
 
 ---
@@ -149,6 +163,7 @@ D:\Task Management\
 │       ├── diary.py                 # /api/diary + export
 │       ├── history.py               # /api/history
 │       ├── dashboard.py             # /api/dashboard/stats
+│       ├── milestones.py            # /api/milestones (CRUD + task assign)
 │       └── summary.py               # /api/summary + export excel
 │
 ├── app/
@@ -163,24 +178,28 @@ D:\Task Management\
 │   │   ├── team.py                  # Team
 │   │   ├── history.py               # HistoryLog
 │   │   ├── diary.py                 # DiaryEntry
-│   │   └── time_log.py              # TimeLog
+│   │   ├── time_log.py              # TimeLog
+│   │   └── milestone.py             # Milestone
 │   ├── repositories/
 │   │   ├── base.py
 │   │   ├── task_repo.py
 │   │   ├── user_repo.py
 │   │   ├── team_repo.py
 │   │   ├── diary_repo.py
-│   │   └── time_log_repo.py
+│   │   ├── time_log_repo.py
+│   │   └── milestone_repo.py        # MilestoneRepository
 │   ├── services/
 │   │   ├── task_service.py
 │   │   ├── team_service.py
 │   │   ├── diary_service.py
 │   │   ├── time_tracking_service.py
-│   │   └── auth_service.py          # PBKDF2 hash, login, JWT-ready
+│   │   ├── auth_service.py          # PBKDF2 hash, login, JWT-ready
+│   │   └── milestone_service.py     # MilestoneService
 │   ├── views/
 │   │   ├── main_layout.py           # Sidebar nav + APIClient per navigation
 │   │   ├── login_view.py            # Split-panel login (Phase 19)
 │   │   ├── dashboard_view.py        # 4 matplotlib charts
+│   │   ├── milestone_view.py        # Milestone management (Phase 22)
 │   │   ├── task_view.py             # Task list + recycle bin
 │   │   ├── team_view.py             # Team CRUD
 │   │   ├── calendar_view.py         # Calendar
@@ -197,7 +216,7 @@ D:\Task Management\
 │       ├── date_helpers.py          # Thai date utilities
 │       └── shortcut_registry.py    # Keyboard shortcut registry
 │
-├── tests/                           # 199 tests — ทุกตัวผ่าน
+├── tests/                           # 229 tests — ทุกตัวผ่าน
 │   ├── conftest.py
 │   ├── test_task_service.py
 │   ├── test_task_service_phase16.py
@@ -229,7 +248,8 @@ D:\Task Management\
 | `users` | สมาชิกทีม, role, skills, username, password_hash, is_admin |
 | `teams` | ข้อมูลทีม |
 | `tasks` | งานหลัก พร้อม status, priority, deadline, soft-delete |
-| `subtasks` | งานย่อย FK → tasks |
+| `subtasks` | งานย่อย FK → tasks, due_date, assignee_id (Phase 23) |
+| `milestones` | ชื่อ, description, due_date, soft-delete |
 | `task_comments` | Comment/Note แบบ timeline |
 | `work_history` | Action log ทุกการเปลี่ยนแปลง |
 | `diary_entries` | บันทึกการทำงานรายวัน |
@@ -261,7 +281,7 @@ python main.py
 
 ### รัน Tests
 ```bash
-pytest tests/ -v                    # ทั้งหมด (199 tests)
+pytest tests/ -v                    # ทั้งหมด (229 tests)
 pytest tests/ --cov=app             # พร้อม coverage
 ```
 
@@ -290,3 +310,5 @@ pytest tests/ --cov=app             # พร้อม coverage
 | **Phase 17** | Global Search + Keyboard Shortcuts | ✅ Done |
 | **Phase 19** | Login System (PBKDF2, Admin UI, Account Page) | ✅ Done |
 | **Phase 21** | Online Desktop App (FastAPI + HTTP Client, LAN multi-user) | ✅ Done |
+| **Phase 22** | Milestone System + Workload Heatmap Dashboard | ✅ Done |
+| **Phase 23** | Sub-task due_date + Assignee fields | ✅ Done |

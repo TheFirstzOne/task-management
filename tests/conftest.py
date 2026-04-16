@@ -21,7 +21,7 @@ def db():
         connect_args={"check_same_thread": False},
     )
     # Register all models
-    from app.models import user, team, task, history, diary, time_log  # noqa: F401
+    from app.models import user, team, task, history, diary, time_log, milestone  # noqa: F401
     Base.metadata.create_all(engine)
 
     Session = sessionmaker(bind=engine)

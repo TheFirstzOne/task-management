@@ -32,6 +32,13 @@
 - เขียน rule ที่ป้องกันความผิดพลาดเดิมในครั้งถัดไป
 - อ่าน memory ที่บันทึกไว้ก่อนเริ่ม session ใหม่เสมอ
 
+### No Git Operations by Agents
+- Agents (sub-processes spawned via Agent tool) **ห้ามรัน git commands ทุกชนิด**
+- ห้าม: `git commit`, `git push`, `git add`, `git reset`, `git checkout`, `git merge`, `git rebase`
+- เหตุผล: Git history ต้องผ่านการตรวจสอบจาก human เสมอ — agents ไม่มีบริบทครบถ้วนในการ craft commit message ที่ถูกต้อง
+- Agents ทำได้เฉพาะ: อ่านไฟล์, แก้ไขโค้ด, รัน tests, รัน builds
+- การ commit ทุกครั้งต้องทำโดย Claude หลัก (main session) หลังจาก user approve เท่านั้น
+
 ### Task Management
 1. **Plan First** — วางแผนพร้อมระบุไฟล์และขั้นตอนก่อนลงมือ
 2. **Track Progress** — mark แต่ละ task เสร็จทันทีหลังทำเสร็จจริง
@@ -44,7 +51,7 @@
 
 **VindFlow** — Desktop Task Management App สำหรับทีมขนาดเล็ก
 สร้างด้วย Python + Flet (desktop UI framework)
-รองรับ: Task/Subtask, Team, Time Tracking, Dashboard Charts, Diary Export
+รองรับ: Task/Subtask (due_date+assignee), Team, Milestone, Time Tracking, Dashboard Charts, Workload Heatmap, Diary Export
 
 - **Entry point:** `main.py`
 - **UI Framework:** Flet 0.82 (function-based views, ไม่ใช่ class-based)
@@ -88,20 +95,23 @@ D:\Task Management\
 │   │   ├── team.py                  # Team, team_members (M2M)
 │   │   ├── history.py               # HistoryLog
 │   │   ├── diary.py                 # DiaryEntry
-│   │   └── time_log.py              # TimeLog (time tracking)
+│   │   ├── time_log.py              # TimeLog (time tracking)
+│   │   └── milestone.py             # Milestone
 │   ├── repositories/
 │   │   ├── base.py                  # BaseRepository(ABC, Generic[T])
 │   │   ├── task_repo.py             # TaskRepository
 │   │   ├── user_repo.py             # UserRepository
 │   │   ├── team_repo.py             # TeamRepository
 │   │   ├── diary_repo.py            # DiaryRepository
-│   │   └── time_log_repo.py         # TimeLogRepository
+│   │   ├── time_log_repo.py         # TimeLogRepository
+│   │   └── milestone_repo.py        # MilestoneRepository
 │   ├── services/
 │   │   ├── task_service.py          # TaskService — หลัก
 │   │   ├── team_service.py          # TeamService
 │   │   ├── diary_service.py         # DiaryService + export Word/PDF
 │   │   ├── time_tracking_service.py # TimeTrackingService (start/stop/log)
-│   │   └── auth_service.py          # AuthService — PBKDF2 hash, login, JWT-ready (Phase 19)
+│   │   ├── auth_service.py          # AuthService — PBKDF2 hash, login, JWT-ready (Phase 19)
+│   │   └── milestone_service.py     # MilestoneService
 │   ├── views/
 │   │   ├── main_layout.py           # Sidebar nav + fresh session per navigation
 │   │   ├── dashboard_view.py        # 4 matplotlib charts (background thread)
@@ -112,8 +122,9 @@ D:\Task Management\
 │   │   ├── diary_view.py            # Job diary + export Word/PDF
 │   │   ├── login_view.py            # Split-panel login (Phase 19)
 │   │   ├── settings_view.py         # User management — admin only (Phase 19)
-│   │   └── account_view.py          # Profile + เปลี่ยนรหัสผ่าน (Phase 19)
-│   │   └── history_view.py          # Activity log
+│   │   ├── account_view.py          # Profile + เปลี่ยนรหัสผ่าน (Phase 19)
+│   │   ├── history_view.py          # Activity log
+│   │   └── milestone_view.py        # Milestone management (Phase 22)
 │   └── utils/
 │       ├── theme.py                 # Color constants (Blue-White theme)
 │       ├── exceptions.py            # Custom exception hierarchy
@@ -124,13 +135,17 @@ D:\Task Management\
 │
 ├── tests/
 │   ├── conftest.py                  # in-memory SQLite fixture (per test function)
-│   ├── test_task_service.py              # 20 tests
+│   ├── test_task_service.py              # 15 tests
 │   ├── test_task_service_phase16.py      # 36 tests (new repo/service methods)
-│   ├── test_team_service.py              # 23 tests
+│   ├── test_team_service.py              # 25 tests
 │   ├── test_time_tracking_service.py     # 24 tests
 │   ├── test_task_repository.py           # 24 tests
 │   ├── test_diary_service.py             # 7 tests
-│   └── test_exceptions.py               # 5 tests
+│   ├── test_exceptions.py               # 5 tests
+│   ├── test_auth_service.py             # 18 tests
+│   ├── test_milestone_service.py        # 18 tests
+│   ├── test_subtask_fields.py           # 12 tests
+│   └── test_search_tasks.py             # 8 tests
 │
 └── data/
     ├── task_manager.db              # SQLite database
@@ -162,7 +177,7 @@ pytest tests/ -v
 pytest tests/ --cov=app --cov-report=term-missing
 ```
 
-**Current test count:** 199 tests, ทุกตัวผ่าน
+**Current test count:** 229 tests, ทุกตัวผ่าน
 
 ---
 
@@ -417,13 +432,14 @@ logout_btn   = ft.Container(visible=on_logout is not None, ...)
 | Thai font (charts) | `dashboard_view.py` auto-detect Tahoma/Leelawadee สำหรับ matplotlib |
 | matplotlib thread safety | Agg backend ไม่ thread-safe 100% — ใช้ `_MATPLOTLIB_LOCK` ก่อน `fig.savefig()` + `plt.close()` เสมอ |
 | Dashboard cache scope | `_CACHE_KEY` เป็น module-level (process-wide) — reset เองเมื่อ date เปลี่ยน หรือ data เปลี่ยน |
+| Flet AlertDialog | เปิดด้วย `dlg.open = True` + `safe_page_update(page)` เสมอ (ไม่ใช้ `page.show_dialog()` สำหรับ AlertDialog) — ปิดด้วย `dlg.open = False` + `safe_page_update(page)` |
 
 ---
 
 ## 9. Testing
 
 ```bash
-pytest tests/ -v                          # รันทั้งหมด (173 tests)
+pytest tests/ -v                          # รันทั้งหมด (229 tests)
 pytest tests/test_task_service.py -v      # เฉพาะ file
 pytest tests/ -k "test_create" -v         # เฉพาะ test ที่ชื่อตรง
 ```
@@ -433,9 +449,9 @@ pytest tests/ -k "test_create" -v         # เฉพาะ test ที่ชื
 
 | Test file | Tests | ครอบคลุม |
 |-----------|-------|---------|
-| `test_task_service.py` | 20 | TaskService core CRUD |
+| `test_task_service.py` | 15 | TaskService core CRUD |
 | `test_task_service_phase16.py` | 36 | get_task_or_none, get_near_due_*, restore, repo methods |
-| `test_team_service.py` | 23 | TeamService, workload, delete_member |
+| `test_team_service.py` | 25 | TeamService, workload, delete_member |
 | `test_time_tracking_service.py` | 24 | start/stop timer, summary |
 | `test_task_repository.py` | 24 | TaskRepository direct queries |
 | `test_time_log_repository.py` | 16 | TimeLogRepository direct queries |
@@ -443,6 +459,10 @@ pytest tests/ -k "test_create" -v         # เฉพาะ test ที่ชื
 | `test_diary_service.py` | 7 | DiaryService |
 | `test_shortcut_registry.py` | 10 | register/dispatch/clear |
 | `test_exceptions.py` | 5 | Custom exception hierarchy |
+| `test_auth_service.py` | 18 | AuthService login, hash, admin |
+| `test_milestone_service.py` | 18 | MilestoneService CRUD + progress |
+| `test_subtask_fields.py` | 12 | SubTask due_date + assignee |
+| `test_search_tasks.py` | 8 | Full-text search |
 
 ---
 

@@ -23,7 +23,25 @@ def task_to_dict(t) -> dict:
         "assignee_name": t.assignee.name if t.assignee else None,
         "created_by_id": t.created_by_id,
         "depends_on_id": t.depends_on_id,
+        "milestone_id": t.milestone_id,
+        "milestone_name": t.milestone.name if t.milestone else None,
         "subtasks": [subtask_to_dict(s) for s in (t.subtasks or []) if not s.is_deleted],
+    }
+
+
+def milestone_to_dict(m) -> dict:
+    tasks = [t for t in (m.tasks or []) if not t.is_deleted]
+    done  = sum(1 for t in tasks if t.status and t.status.value == "Done")
+    return {
+        "id":          m.id,
+        "name":        m.name,
+        "description": m.description or "",
+        "due_date":    m.due_date.isoformat() if m.due_date else None,
+        "created_at":  m.created_at.isoformat() if m.created_at else None,
+        "updated_at":  m.updated_at.isoformat() if m.updated_at else None,
+        "task_count":  len(tasks),
+        "done_count":  done,
+        "progress":    round(done / len(tasks), 2) if tasks else 0.0,
     }
 
 
@@ -34,6 +52,9 @@ def subtask_to_dict(s) -> dict:
         "title": s.title,
         "is_done": s.is_done,
         "is_deleted": s.is_deleted,
+        "due_date": s.due_date.isoformat() if s.due_date else None,
+        "assignee_id": s.assignee_id,
+        "assignee_name": s.assignee.name if s.assignee else None,
     }
 
 

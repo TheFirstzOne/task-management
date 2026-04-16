@@ -596,6 +596,143 @@ def build_task_view(api, page: ft.Page,
             text_size=13,
         )
 
+        # ── Edit popup state ─────────────────────────────────────
+        _edit_st = {"id": None, "due_date": None}
+
+        st_title_tf = ft.TextField(
+            hint_text="ชื่อ sub-task",
+            border_color=BORDER, focused_border_color=ACCENT,
+            color=TEXT_PRI, bgcolor=BG_INPUT, border_radius=8,
+            text_size=13,
+            content_padding=ft.padding.symmetric(horizontal=10, vertical=8),
+        )
+        st_due_label = ft.Text("ไม่ได้กำหนด", size=12, color=TEXT_SEC)
+
+        def _on_st_date_picked(e):
+            if st_due_picker.value:
+                local = _fix_picker_date(st_due_picker.value)
+                _edit_st["due_date"] = local
+                st_due_label.value = local.strftime("%d/%m/%Y")
+                safe_page_update(page)
+
+        st_due_picker = ft.DatePicker(on_change=_on_st_date_picked)
+
+        def _clear_st_due(e):
+            _edit_st["due_date"] = None
+            st_due_label.value = "ไม่ได้กำหนด"
+            safe_page_update(page)
+
+        st_assignee_dd = ft.Dropdown(
+            hint_text="เลือกผู้รับผิดชอบ",
+            border_color=BORDER, focused_border_color=ACCENT,
+            text_size=13, bgcolor=BG_INPUT, width=280,
+            options=[ft.dropdown.Option("", "— ไม่ระบุ —")],
+        )
+
+        def _open_st_edit(st):
+            _edit_st["id"] = st["id"]
+            st_title_tf.value = st.get("title", "")
+            due_str = st.get("due_date")
+            if due_str:
+                try:
+                    dt = datetime.fromisoformat(due_str)
+                    _edit_st["due_date"] = dt
+                    st_due_label.value = dt.strftime("%d/%m/%Y")
+                except Exception:
+                    _edit_st["due_date"] = None
+                    st_due_label.value = "ไม่ได้กำหนด"
+            else:
+                _edit_st["due_date"] = None
+                st_due_label.value = "ไม่ได้กำหนด"
+            try:
+                team_id = task.get("team_id")
+                members = (api.get_members_for_dropdown(team_id=team_id)
+                           if team_id else api.get_members_for_dropdown())
+            except Exception:
+                members = []
+            st_assignee_dd.options = [
+                ft.dropdown.Option("", "— ไม่ระบุ —"),
+                *[ft.dropdown.Option(str(m["id"]), m["name"]) for m in members],
+            ]
+            cur_aid = st.get("assignee_id")
+            st_assignee_dd.value = str(cur_aid) if cur_aid else ""
+            st_edit_dlg.open = True
+            safe_page_update(page)
+
+        def _save_st_edit(e):
+            sid = _edit_st.get("id")
+            if not sid:
+                return
+            title = (st_title_tf.value or "").strip()
+            if not title:
+                show_snack(page, "ชื่อ sub-task ต้องไม่ว่าง", error=True)
+                return
+            aid_str = st_assignee_dd.value or ""
+            assignee_id = int(aid_str) if aid_str else None
+            try:
+                api.update_subtask(sid, title=title,
+                                   due_date=_edit_st["due_date"],
+                                   assignee_id=assignee_id)
+                st_edit_dlg.open = False
+                _refresh_subtasks()
+                safe_page_update(page)
+            except Exception as ex:
+                show_snack(page, str(ex), error=True)
+
+        def _close_st_edit(e):
+            st_edit_dlg.open = False
+            safe_page_update(page)
+
+        st_edit_dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("แก้ไข Sub-task", size=15,
+                          weight=ft.FontWeight.W_600, color=TEXT_PRI),
+            content=ft.Column(
+                tight=True,
+                width=340,
+                spacing=10,
+                controls=[
+                    ft.Text("ชื่องาน", size=12, color=TEXT_SEC,
+                            weight=ft.FontWeight.W_500),
+                    st_title_tf,
+                    ft.Text("วันครบกำหนด", size=12, color=TEXT_SEC,
+                            weight=ft.FontWeight.W_500),
+                    ft.Row(
+                        controls=[
+                            ft.IconButton(
+                                icon=ft.Icons.CALENDAR_TODAY,
+                                icon_color=ACCENT, icon_size=18,
+                                tooltip="เลือกวันที่",
+                                on_click=lambda e: page.show_dialog(st_due_picker),
+                            ),
+                            st_due_label,
+                            ft.IconButton(
+                                icon=ft.Icons.CLOSE, icon_size=14,
+                                icon_color=TEXT_SEC, tooltip="ล้างวันที่",
+                                on_click=_clear_st_due,
+                            ),
+                        ],
+                        spacing=4,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Text("ผู้รับผิดชอบ", size=12, color=TEXT_SEC,
+                            weight=ft.FontWeight.W_500),
+                    st_assignee_dd,
+                ],
+            ),
+            actions=[
+                ft.TextButton("ยกเลิก", on_click=_close_st_edit),
+                ft.ElevatedButton(
+                    "บันทึก",
+                    style=ft.ButtonStyle(bgcolor=ACCENT, color="#FFFFFF"),
+                    on_click=_save_st_edit,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.overlay.append(st_edit_dlg)
+
+        # ── Delete confirmation ──────────────────────────────────
         def _confirm_delete_subtask(sid: int, title: str):
             confirm_msg.value = f'ต้องการลบ sub-task "{title}" ใช่ไหม?'
             def _do():
@@ -605,24 +742,50 @@ def build_task_view(api, page: ft.Page,
             confirm_dlg.open = True
             safe_page_update(page)
 
+        # ── Helper: format ISO date string for inline display ────
+        def _fmt_st_date(iso: str) -> str:
+            try:
+                return datetime.fromisoformat(iso).strftime("%d/%m/%y")
+            except Exception:
+                return iso[:10] if iso else ""
+
+        # ── Sub-task row ─────────────────────────────────────────
         def _subtask_row(st) -> ft.Row:
+            controls: list = [
+                ft.Checkbox(
+                    value=st.get("is_done", False), fill_color=ACCENT,
+                    on_change=lambda e, sid=st["id"]: (
+                        api.toggle_subtask(sid), _refresh_subtasks()),
+                ),
+                ft.Text(
+                    st["title"], size=13,
+                    color=TEXT_SEC if st.get("is_done", False) else TEXT_PRI,
+                    expand=True,
+                ),
+            ]
+            if st.get("assignee_name"):
+                controls.append(
+                    ft.Text(f"👤 {st['assignee_name']}", size=11, color=TEXT_SEC)
+                )
+            if st.get("due_date"):
+                controls.append(
+                    ft.Text(f"📅 {_fmt_st_date(st['due_date'])}", size=11, color=TEXT_SEC)
+                )
+            controls.extend([
+                ft.IconButton(
+                    icon=ft.Icons.EDIT_OUTLINED, icon_size=14, icon_color=ACCENT2,
+                    tooltip="แก้ไข sub-task",
+                    on_click=lambda e, s=st: _open_st_edit(s),
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.CLOSE, icon_size=14, icon_color=TEXT_SEC,
+                    tooltip="ลบ sub-task",
+                    on_click=lambda e, sid=st["id"], t=st["title"]: (
+                        _confirm_delete_subtask(sid, t)),
+                ),
+            ])
             return ft.Row(
-                controls=[
-                    ft.Checkbox(
-                        value=st.get("is_done", False), fill_color=ACCENT,
-                        on_change=lambda e, sid=st["id"]: (
-                            api.toggle_subtask(sid), _refresh_subtasks()),
-                    ),
-                    ft.Text(st["title"], size=13,
-                            color=TEXT_SEC if st.get("is_done", False) else TEXT_PRI,
-                            expand=True),
-                    ft.IconButton(
-                        icon=ft.Icons.CLOSE, icon_size=14, icon_color=TEXT_SEC,
-                        tooltip="ลบ sub-task",
-                        on_click=lambda e, sid=st["id"], t=st["title"]: (
-                            _confirm_delete_subtask(sid, t)),
-                    ),
-                ],
+                controls=controls,
                 spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
@@ -645,11 +808,21 @@ def build_task_view(api, page: ft.Page,
 
         def _add_subtask(e):
             text = (new_sub_tf.value or "").strip()
-            if text:
-                api.add_subtask(task["id"], text)
-                new_sub_tf.value = ""
-                _refresh_subtasks()
-                safe_page_update(page)
+            if not text:
+                return
+            parent_due = task.get("due_date")
+            parent_aid = task.get("assignee_id")
+            due_dt: Optional[datetime] = None
+            if parent_due:
+                try:
+                    due_dt = datetime.fromisoformat(parent_due)
+                except Exception:
+                    pass
+            api.add_subtask(task["id"], text,
+                            due_date=due_dt, assignee_id=parent_aid)
+            new_sub_tf.value = ""
+            _refresh_subtasks()
+            safe_page_update(page)
 
         _refresh_subtasks()
         add_row = ft.Row(

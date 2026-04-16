@@ -37,8 +37,11 @@ _CACHE_KEY: dict = {"value": None}   # module-level: persists across navigations
 _MATPLOTLIB_LOCK = threading.Lock()  # protect global pyplot state (Agg is not 100% thread-safe)
 
 
-def _make_cache_key(stats: dict, priority_counts: dict, workload_counter: dict) -> tuple:
+def _make_cache_key(stats: dict, priority_counts: dict,
+                    workload_counter: dict, heatmap_data: dict) -> tuple:
     """Hashable signature of chart inputs + today's date (trend changes per day)."""
+    hm_users = tuple(heatmap_data.get("users", []))
+    hm_data  = tuple(tuple(row) for row in heatmap_data.get("data", []))
     return (
         stats.get("total", 0), stats.get("pending", 0),
         stats.get("in_progress", 0), stats.get("review", 0),
@@ -46,6 +49,7 @@ def _make_cache_key(stats: dict, priority_counts: dict, workload_counter: dict) 
         stats.get("overdue", 0),
         tuple(sorted(priority_counts.items())),
         tuple(sorted(workload_counter.items())),
+        hm_users, hm_data,
         datetime.now().date(),
     )
 
@@ -319,6 +323,65 @@ def _chart_team_workload(workload_counter: dict) -> ft.Control:
                     height=_IMG_H, fit="contain")
 
 
+# ── B5: Workload Heatmap (Phase 22) ─────────────────────────────────────────
+def _chart_workload_heatmap(heatmap_data: dict) -> ft.Control:
+    """Accepts pre-collected {users, weeks, data} dict from API."""
+    users = heatmap_data.get("users", [])
+    weeks = heatmap_data.get("weeks", [])
+    data  = heatmap_data.get("data", [])
+
+    if not users:
+        return ft.Text("ยังไม่มีข้อมูล (ต้องมีงานที่มี due date และ assignee)",
+                       size=12, color=theme.TEXT_SEC)
+
+    try:
+        import numpy as np
+        matrix = np.array(data, dtype=float)
+        use_numpy = True
+    except Exception:
+        use_numpy = False
+
+    n_users = len(users)
+    n_weeks = len(weeks)
+    fig_h = max(2.0, 0.55 * n_users)
+    fig, ax = plt.subplots(figsize=(_FIG_W * 1.5, fig_h), facecolor="#FFFFFF")
+    ax.set_facecolor("#FFFFFF")
+
+    if use_numpy:
+        im = ax.imshow(matrix, cmap="Blues", aspect="auto",
+                       vmin=0, vmax=max(matrix.max(), 1))
+    else:
+        im = ax.pcolor(data, cmap="Blues", vmin=0)  # fallback
+
+    # Week labels (x-axis) — show only last 2 chars e.g. "W14"
+    short_weeks = [f"W{w.split('-W')[-1]}" if "-W" in w else w for w in weeks]
+    ax.set_xticks(range(n_weeks))
+    ax.set_xticklabels(short_weeks, fontsize=8, rotation=30, ha="right",
+                       color=_TEXT_MID)
+    ax.set_yticks(range(n_users))
+    ax.set_yticklabels(users, fontsize=9, color=_TEXT_DARK,
+                       fontproperties=_tfp())
+
+    # Annotate non-zero cells
+    vmax = (matrix.max() if use_numpy else max(max(r) for r in data if r)) or 1
+    for r_idx, row in enumerate(data):
+        for c_idx, val in enumerate(row):
+            if val > 0:
+                text_color = "white" if val > vmax * 0.6 else _TEXT_DARK
+                ax.text(c_idx, r_idx, str(int(val)),
+                        ha="center", va="center", fontsize=8,
+                        color=text_color, fontweight="bold")
+
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.tick_params(length=0)
+    fig.tight_layout(pad=0.8)
+
+    img_h = max(180, 45 * n_users)
+    return ft.Image(src=_render_chart(fig, "workload_heatmap"),
+                    height=img_h, fit="contain")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  MAIN ENTRY
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -345,8 +408,9 @@ def build_dashboard_view(api, navigate_fn=None) -> ft.Control:
 
 
 def _build_dashboard_inner(api, navigate_fn=None) -> ft.Control:
-    stats = api.get_dashboard_stats()
-    tasks = api.get_tasks()
+    stats        = api.get_dashboard_stats()
+    tasks        = api.get_tasks()
+    heatmap_data = api.get_workload_heatmap()
 
     # ── Stat cards ─────────────────────────────────────────────────
     def _stat_card(label: str, value: int, color: str,
@@ -451,7 +515,7 @@ def _build_dashboard_inner(api, navigate_fn=None) -> ft.Control:
         )
 
     # ── Cache check ───────────────────────────────────────────────────────────
-    current_key = _make_cache_key(stats, priority_counts, workload_counter)
+    current_key = _make_cache_key(stats, priority_counts, workload_counter, heatmap_data)
     data_unchanged = (current_key == _CACHE_KEY["value"])
 
     # ── Placeholder: show stale PNG instantly if it exists, else spinner ──────
@@ -467,6 +531,7 @@ def _build_dashboard_inner(api, navigate_fn=None) -> ft.Control:
     ph_prio     = _init_placeholder("priority_bar")
     ph_trend    = _init_placeholder("weekly_trend")
     ph_workload = _init_placeholder("team_workload")
+    ph_heatmap  = _init_placeholder("workload_heatmap")
 
     chart_grid = ft.Column(
         controls=[
@@ -477,6 +542,9 @@ def _build_dashboard_inner(api, navigate_fn=None) -> ft.Control:
             ft.Row(controls=[
                 _chart_card("แนวโน้ม 7 วัน",    ph_trend,    "งานที่สร้างและเสร็จในแต่ละวัน"),
                 _chart_card("ภาระงานต่อสมาชิก", ph_workload, "งานที่ยังไม่เสร็จต่อสมาชิก"),
+            ], spacing=12),
+            ft.Row(controls=[
+                _chart_card("Workload Heatmap", ph_heatmap, "งานรายสัปดาห์แต่ละสมาชิก"),
             ], spacing=12),
         ],
         spacing=12,
@@ -511,13 +579,14 @@ def _build_dashboard_inner(api, navigate_fn=None) -> ft.Control:
         _replace_chart_placeholder(placeholder, ctrl)
 
     def _render_charts_bg() -> None:
-        """Parallel rendering: 4 threads, one per chart.
+        """Parallel rendering: 5 threads, one per chart.
         Uses only pre-collected plain dicts/lists — no API calls."""
         pairs = [
             (ph_donut,    lambda: _chart_status_donut(stats)),
             (ph_prio,     lambda: _chart_priority_bar(priority_counts)),
             (ph_trend,    lambda: _chart_weekly_trend(trend_created, trend_done)),
             (ph_workload, lambda: _chart_team_workload(workload_counter)),
+            (ph_heatmap,  lambda: _chart_workload_heatmap(heatmap_data)),
         ]
         threads = [
             threading.Thread(

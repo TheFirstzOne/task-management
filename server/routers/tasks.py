@@ -52,6 +52,8 @@ class CreateCommentIn(BaseModel):
 
 class CreateSubtaskIn(BaseModel):
     title: str
+    due_date: Optional[str] = None
+    assignee_id: Optional[int] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -294,7 +296,11 @@ def add_subtask(
     """Add a subtask to a task."""
     svc = TaskService(db)
     try:
-        subtask = svc.add_subtask(task_id, body.title)
+        subtask = svc.add_subtask(
+            task_id, body.title,
+            due_date=_parse_dt(body.due_date),
+            assignee_id=body.assignee_id,
+        )
         return subtask_to_dict(subtask)
     except Exception as exc:
         _handle_exc(exc)

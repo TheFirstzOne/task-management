@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server.routers import auth as auth_router
-from server.routers import dashboard, diary, history, summary, tasks, users
+from server.routers import dashboard, diary, history, milestones, summary, tasks, users
 from server.routers.subtasks import router as subtasks_router
 from server.routers.teams import members_router, teams_router
 
@@ -41,8 +41,9 @@ app.include_router(members_router, prefix="/api/members", tags=["members"])
 app.include_router(users.router,     prefix="/api/users",     tags=["users"])
 app.include_router(diary.router,     prefix="/api/diary",     tags=["diary"])
 app.include_router(history.router,   prefix="/api/history",   tags=["history"])
-app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
-app.include_router(summary.router,   prefix="/api/summary",   tags=["summary"])
+app.include_router(dashboard.router,   prefix="/api/dashboard",   tags=["dashboard"])
+app.include_router(summary.router,     prefix="/api/summary",     tags=["summary"])
+app.include_router(milestones.router,  prefix="/api/milestones",  tags=["milestones"])
 
 
 @app.get("/")

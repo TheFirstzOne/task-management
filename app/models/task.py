@@ -6,7 +6,7 @@ import enum
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean,
-    DateTime, Enum, ForeignKey
+    DateTime, Enum, ForeignKey, BigInteger
 )
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -40,16 +40,18 @@ class Task(Base):
     due_date       = Column(DateTime, nullable=True)
 
     # FK
-    team_id        = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
-    assignee_id    = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    created_by_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
-    depends_on_id  = Column(Integer, ForeignKey("tasks.id"), nullable=True, index=True)
+    team_id        = Column(Integer, ForeignKey("teams.id"),      nullable=True, index=True)
+    assignee_id    = Column(Integer, ForeignKey("users.id"),      nullable=True, index=True)
+    created_by_id  = Column(Integer, ForeignKey("users.id"),      nullable=True)
+    depends_on_id  = Column(Integer, ForeignKey("tasks.id"),      nullable=True, index=True)
+    milestone_id   = Column(Integer, ForeignKey("milestones.id"), nullable=True, index=True)
 
     created_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     updated_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     is_deleted     = Column(Boolean, default=False, nullable=False, server_default="0", index=True)
 
     # Relationships
+    milestone   = relationship("Milestone", back_populates="tasks")
     team        = relationship("Team", back_populates="tasks")
     assignee    = relationship("User", foreign_keys=[assignee_id],   back_populates="assigned_tasks")
     created_by  = relationship("User", foreign_keys=[created_by_id], back_populates="created_tasks")
@@ -69,15 +71,18 @@ class Task(Base):
 class SubTask(Base):
     __tablename__ = "subtasks"
 
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    task_id    = Column(Integer, ForeignKey("tasks.id"), nullable=False)
-    title      = Column(String(200), nullable=False)
-    is_done    = Column(Boolean, default=False, nullable=False)
-    is_deleted = Column(Boolean, default=False, nullable=False, server_default="0")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    task_id     = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    title       = Column(String(200), nullable=False)
+    is_done     = Column(Boolean, default=False, nullable=False)
+    is_deleted  = Column(Boolean, default=False, nullable=False, server_default="0")
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    due_date    = Column(DateTime, nullable=True)
+    assignee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Relationships
-    task = relationship("Task", back_populates="subtasks")
+    task     = relationship("Task", back_populates="subtasks")
+    assignee = relationship("User", foreign_keys=[assignee_id])
 
     def __repr__(self) -> str:
         return f"<SubTask id={self.id} title={self.title!r} done={self.is_done}>"

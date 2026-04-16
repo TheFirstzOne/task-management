@@ -46,7 +46,7 @@ def get_db():
 def init_db() -> None:
     """Create all tables if they do not exist yet."""
     # Import models so SQLAlchemy registers them before create_all
-    from app.models import user, team, task, history, diary, time_log  # noqa: F401
+    from app.models import user, team, task, history, diary, time_log, milestone  # noqa: F401
     Base.metadata.create_all(bind=engine)
     # Add is_deleted columns to existing databases that predate these migrations
     from sqlalchemy import text
@@ -71,6 +71,12 @@ def init_db() -> None:
         "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)",
         "ALTER TABLE users ADD COLUMN is_admin      BOOLEAN NOT NULL DEFAULT 0",
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username) WHERE username IS NOT NULL",
+        # Phase 22 — Milestone
+        "ALTER TABLE tasks ADD COLUMN milestone_id INTEGER REFERENCES milestones(id)",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_milestone_id ON tasks (milestone_id)",
+        # Phase 23 — SubTask fields
+        "ALTER TABLE subtasks ADD COLUMN due_date DATETIME",
+        "ALTER TABLE subtasks ADD COLUMN assignee_id INTEGER REFERENCES users(id)",
     ]
     for _sql in _migrations:
         try:

@@ -18,3 +18,12 @@ def get_stats(
 ):
     """Return task count statistics for the dashboard."""
     return TaskService(db).get_dashboard_stats()
+
+
+@router.get("/workload-heatmap")
+def get_workload_heatmap(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Return workload heatmap data — users × weeks task count matrix."""
+    return TaskService(db).get_workload_heatmap(weeks=6)
